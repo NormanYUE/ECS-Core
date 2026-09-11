@@ -47,6 +47,46 @@
 |---|---|
 | `GlobalRandom`（单例） | 全局确定性随机源（`Unity.Mathematics.Random`）。值类型，取数需 `ref` 读写；并行随机流应按实体拆分独立组件 |
 
+### Spatial Index（空间索引）
+
+| 类型 | 说明 |
+|---|---|
+| `BoundingVolume` | 本地空间 AABB（`Center`/`Extents`），空间索引与视锥剔除的输入 |
+| `SpatialTree` / `Quadtree` / `Octree` | 0GC 空间划分树：SoA 预分配数组 + 空闲链表，稳态零分配；插入/删除/移动 O(log n)~O(1)；`QueryAABB`/`QuerySphere` 支持 struct 访问器（零装箱）与调用方列表填充；四叉树支持 XY/XZ 平面 |
+| `SpatialIndexConfig`（单例） | 索引配置：维度（QuadXY/QuadXZ/Octree）、世界范围、最大深度、节点容量 |
+| `SpatialIndexSystem` | 每 tick 把 (`LocalToWorld`+`BoundingVolume`) 实体的世界包围盒增量维护进树；实体销毁自动剔除 |
+| `SpatialIndex` | 静态注册表，`SpatialIndex.GetTree(world)` 供任意代码做范围查询 |
+
+### Culling（视锥剔除）
+
+| 类型 | 说明 |
+|---|---|
+| `CameraFrustum`（单例） | 6 个归一化视锥平面（法线朝内），由桥接代码每帧从相机 VP 矩阵写入 |
+| `InView`（标签） | 视口内标记，仅在进出视口边沿增删（结构变更正比于边沿实体数） |
+| `FrustumMath` | 纯数学：`FromViewProjection` 平面提取（Gribb-Hartmann）、球/AABB 视锥测试、`TransformAABB` 世界盒换算 |
+| `FrustumCullingSystem` | 世界包围盒-视锥测试，维护 `InView` 标记；无相机单例时整帧跳过 |
+
+## 系统使用示例
+
+```csharp
+// 启动：注册系统（建议在渲染/逻辑系统之前）
+manager.GetTicker(updateIdx).Register<SpatialIndexSystem>();
+manager.GetTicker(updateIdx).Register<FrustumCullingSystem>();
+
+// 配置空间索引（可选，缺省用 SpatialIndexConfig.Default）
+var cfg = world.GetOrCreateSingleton<SpatialIndexConfig>();
+world.SetComponent(cfg, SpatialIndexConfig.Default); // 或自定义 QuadXZ 等
+
+// 相机桥接：每帧写入视锥
+var cam = world.GetOrCreateSingleton<CameraFrustum>();
+world.SetComponent(cam, FrustumMath.FromViewProjection(Camera.main.projectionMatrix * Camera.main.worldToCameraMatrix));
+
+// 游戏代码：范围查询
+var tree = SpatialIndex.GetTree(world);
+var buffer = new List<Entity>(256);
+tree.QuerySphere(explosionCenter, radius, buffer);
+```
+
 ## 使用示例
 
 ```csharp
