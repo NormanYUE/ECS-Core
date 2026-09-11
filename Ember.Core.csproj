@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>netstandard2.1</TargetFramework>
+        <LangVersion>9.0</LangVersion>
+        <Nullable>disable</Nullable>
+        <RootNamespace>Ember.Core</RootNamespace>
+        <AssemblyName>Ember.Core</AssemblyName>
+        <EmberFrameworkDir Condition="'$(EmberFrameworkDir)' == ''">$(MSBuildThisFileDirectory)../Ember</EmberFrameworkDir>
+        <EmberRuntimeDll Condition="'$(EmberRuntimeDll)' == ''">$(MSBuildThisFileDirectory)../Ember.Package/Runtime/Ember.dll</EmberRuntimeDll>
+        <EmberGeneratorDll Condition="'$(EmberGeneratorDll)' == ''">$(MSBuildThisFileDirectory)../Ember.Package/RoslynAnalyzers/Ember.Generator.dll</EmberGeneratorDll>
+        <EmberPackageDir Condition="'$(EmberPackageDir)' == ''">$(MSBuildThisFileDirectory)../Ember.Core.Package</EmberPackageDir>
+        <EmberDeployPackageBinaries Condition="'$(EmberDeployPackageBinaries)' == ''">false</EmberDeployPackageBinaries>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Compile Remove="tests/**" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Reference Include="Ember">
+            <HintPath>$(EmberRuntimeDll)</HintPath>
+        </Reference>
+        <Reference Include="UnityEngine.CoreModule">
+            <HintPath>$(EmberFrameworkDir)/libs/UnityEngine.CoreModule.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <Reference Include="Unity.Collections">
+            <HintPath>$(EmberFrameworkDir)/libs/Unity.Collections.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <Reference Include="Unity.Mathematics">
+            <HintPath>$(EmberFrameworkDir)/libs/Unity.Mathematics.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <Analyzer Include="$(EmberGeneratorDll)" />
+    </ItemGroup>
+
+    <Target Name="DeployPackageDlls" AfterTargets="Build"
+            Condition="'$(EmberDeployPackageBinaries)' == 'true'">
+        <MakeDir Directories="$(EmberPackageDir)/Runtime"/>
+        <Copy SourceFiles="$(TargetPath)"
+              DestinationFiles="$(EmberPackageDir)/Runtime/Ember.Core.dll"
+              SkipUnchangedFiles="true" />
+    </Target>
+
+</Project>

@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net9.0</TargetFramework>
+        <RootNamespace>Ember.Core.Tests</RootNamespace>
+        <AssemblyName>Ember.Core.Tests</AssemblyName>
+        <IsPackable>false</IsPackable>
+        <IsTestProject>true</IsTestProject>
+        <LangVersion>9.0</LangVersion>
+        <EmberFrameworkDir Condition="'$(EmberFrameworkDir)' == ''">$(MSBuildThisFileDirectory)../../../Ember</EmberFrameworkDir>
+        <EmberRuntimeDll Condition="'$(EmberRuntimeDll)' == ''">$(MSBuildThisFileDirectory)../../../Ember.Package/Runtime/Ember.dll</EmberRuntimeDll>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="NUnit" Version="4.0.1" />
+        <PackageReference Include="NUnit3TestAdapter" Version="4.5.0" />
+        <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.9.0" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\..\Ember.Core.csproj" />
+        <Reference Include="Ember">
+            <HintPath>$(EmberRuntimeDll)</HintPath>
+            <Private>true</Private>
+        </Reference>
+        <Reference Include="UnityEngine.CoreModule">
+            <HintPath>$(EmberFrameworkDir)/libs/UnityEngine.CoreModule.dll</HintPath>
+            <Private>true</Private>
+        </Reference>
+        <Reference Include="Unity.Collections">
+            <HintPath>$(EmberFrameworkDir)/libs/Unity.Collections.dll</HintPath>
+            <Private>true</Private>
+        </Reference>
+        <Reference Include="Unity.Mathematics">
+            <HintPath>$(EmberFrameworkDir)/libs/Unity.Mathematics.dll</HintPath>
+            <Private>true</Private>
+        </Reference>
+    </ItemGroup>
+
+</Project>
