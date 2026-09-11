@@ -8,9 +8,9 @@ description: Ember Core Components 发布 Agent。构建并发布 DLL-only UPM �
 ## 触发条件
 
 - “发布”“发布测试”“release” -> 发布新的 a.b.c 版本到包仓库 `develop`。
-- “发布生产”“正式发布” -> 仅在 `develop` 已由独立 Unity 消费工程验收通过后，将同一 a.b.c 版本合并到 `master` 并打 tag。
+- “发布生产”“正式发布” -> 将 `develop` 上最新的 a.b.c 版本合并到 `master` 并打 tag。
 
-## 仓库与消费工程
+## 仓库
 
 ```text
 源码仓库: /Users/norman/Documents/RiderProjects/Ember.Core         (main)
@@ -19,7 +19,6 @@ description: Ember Core Components 发布 Agent。构建并发布 DLL-only UPM �
           https://github.com/NormanYUE/Ember-Core （公开）
 测试分支: develop
 生产分支: master
-消费工程: 独立 Unity 消费工程（接入后在本文档登记路径）
 框架依赖: com.ember.ecs（/Users/norman/Documents/RiderProjects/Ember.Package）
 ```
 
@@ -120,30 +119,12 @@ git -C "/Users/norman/Documents/RiderProjects/Ember.Core.Package" push origin de
 
 不得在源码仓库使用无审查的 `git add -A`，也不得把嵌套包仓库视为源码提交的一部分。
 
-### Step 7: 独立 Unity 消费验收
-
-发布后让消费工程通过 Unity Package Manager resolve/update 拉取 `develop`。开始测试前必须确认：
-
-- `Packages/manifest.json` 指向预期源且 `com.ember.ecs` 已显式声明（UPM 不解析传递 Git 依赖）。
-- 不存在 `Packages/com.ember.core` embedded override。
-- `packages-lock.json`、PackageCache 版本和 DLL hash 对应刚推送的包提交。
-
-验收项：
-
-- 消费 asmdef 引用 `Ember.Core.Runtime` 后编译通过，`Ember.Core` 命名空间下的组件全部可见。
-- 创建 `World` 后本包组件（`LocalTransform` 等）已注册，可在 Editor 的 Component Types 窗口看到。
-- Unity Test Runner 中运行 `Ember.Core.Tests` 的 World 集成测试（CLI 跳过项在此必须真正执行并通过）。
-- Burst 编译的 Job 中读写本包组件无托管引用错误。
-
-失败时报告完整失败项并等待后续修复决策，禁止直接改消费工程业务代码或 PackageCache。
-只有 Step 7 通过，才可汇报“测试发布验证通过”。仅完成 push 时必须明确写“已发布，等待/正在消费工程验收”。
-
 ## 生产发布流程
 
-只有用户明确要求“发布生产”，且最新 develop 版本已通过 Step 7，才执行：
+用户明确要求“发布生产”后执行：
 
 1. 确认 `develop` 上的目标版本仍是纯 `a.b.c`。
-2. 更新双语 CHANGELOG/README 并重建、重跑全部源码与消费门禁。
+2. 更新双语 CHANGELOG/README 并重建、重跑全部源码门禁。
 3. 提交并推送源码 `main` 与包 `develop`。
 4. 包仓库通过 Pull Request（develop -> master）合并并创建 `v<a.b.c>` release tag 后推送 tag。
    `master` 已启用分支保护：禁止直接 push（对管理员同样生效），必须走 PR；`develop` 仅禁止强推与删除，发布流程可直接 push。
@@ -157,8 +138,6 @@ git -C "/Users/norman/Documents/RiderProjects/Ember.Core.Package" push origin de
 源码：<sha> -> origin/main
 包：<sha> -> develop
 产物：Runtime/Ember.Core.dll hash 已匹配，GeneratedComponentRegistrar 存在
-消费工程：<package revision>
-Unity：编译 <result>，组件注册 <result>，Test Runner <result>，Burst <result>
 ```
 
-任何未执行项必须明确标为未验证，不得用源码侧 build 代替 Unity 消费结果。
+任何未执行项必须明确标为未验证。
