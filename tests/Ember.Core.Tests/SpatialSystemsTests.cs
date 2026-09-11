@@ -29,11 +29,7 @@ namespace Ember.Core.Tests
         public void TearDown()
         {
             if (m_Manager == null) return;
-            if (World.TryGetSingleton<SpatialTree>(out var treeOwner))
-            {
-                ref var tree = ref World.GetComponent<SpatialTree>(treeOwner);
-                if (tree.IsInitialized) tree.Dispose(); // 原生容器随测试拆卸释放
-            }
+            // 树存于 World 托管 buffer，随 World 自动释放，无需手动清理
             m_Manager.Dispose();
         }
 
@@ -80,9 +76,7 @@ namespace Ember.Core.Tests
             var b = SpawnIndexed(new float3(-100f, 0f, 0f), new float3(2f));
             m_Manager.Tick(m_Ticker, 0.016f);
 
-            Assert.That(World.TryGetSingleton<SpatialTree>(out var treeOwner), Is.True);
-            ref var tree = ref World.GetComponent<SpatialTree>(treeOwner);
-            Assert.That(tree.IsInitialized, Is.True);
+            var tree = World.GetSpatialTree();
             Assert.That(tree.Contains(a), Is.True);
             Assert.That(tree.Contains(b), Is.True);
             Assert.That(tree.Count, Is.EqualTo(2));
@@ -131,8 +125,7 @@ namespace Ember.Core.Tests
             m_Manager.Tick(m_Ticker, 0.016f);
 
             var buffer = new NativeList<Entity>(8, Allocator.Persistent);
-            Assert.That(World.TryGetSingleton<SpatialTree>(out var treeOwner), Is.True);
-            World.GetComponent<SpatialTree>(treeOwner).QueryAABB(
+            World.GetSpatialTree().QueryAABB(
                 new float3(5f, -1000f, 5f), new float3(15f, 1000f, 15f), ref buffer);
             Assert.That(buffer, Does.Contain(entity));
             buffer.Dispose();

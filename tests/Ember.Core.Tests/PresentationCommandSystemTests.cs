@@ -34,11 +34,6 @@ namespace Ember.Core.Tests
                 ref var cmds = ref World.GetComponent<PresentationCommands>(cmdOwner);
                 if (cmds.IsInitialized) cmds.Dispose();
             }
-            if (World.TryGetSingleton<SpatialTree>(out var treeOwner))
-            {
-                ref var tree = ref World.GetComponent<SpatialTree>(treeOwner);
-                if (tree.IsInitialized) tree.Dispose();
-            }
             m_Manager.Dispose();
         }
 

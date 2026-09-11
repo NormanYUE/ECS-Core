@@ -7,18 +7,32 @@ using Unity.Mathematics;
 
 namespace Ember.Core.Tests
 {
+    /// <summary>
+    /// 空间树算法测试。树存储在 World 托管 buffer 中，随 World.Dispose 自动释放，
+    /// 测试无需任何手动清理。依赖 Unity 原生容器，CLI 下自动跳过。
+    /// </summary>
+    [Parallelizable(ParallelScope.None)]
     [TestFixture]
     public class SpatialTreeTests
     {
-        private static Entity E(int index) => new Entity(index, 1);
+        private World m_World;
+
+        [SetUp]
+        public void SetUp()
+        {
+            RequireNativeContainers();
+            m_World = new World();
+        }
+
+        [TearDown]
+        public void TearDown() => m_World?.Dispose();
 
         private static void RequireNativeContainers()
         {
             try
             {
-                var probe = new NativeParallelHashMap<int, int>(4, Allocator.Persistent);
-                probe.TryAdd(1, 1);
-                probe.Dispose();
+                using var probe = new World();
+                probe.CreateEntity();
             }
             catch (SecurityException)
             {
@@ -26,21 +40,18 @@ namespace Ember.Core.Tests
             }
         }
 
-        private static SpatialTree CreateTree(SpatialDimension dim, float3 center, float3 halfExtent,
+        private static Entity E(int index) => new Entity(index, 1);
+
+        private SpatialTreeView CreateTree(SpatialDimension dim, float3 center, float3 halfExtent,
             int maxDepth = 8, int nodeCapacity = 8)
-        {
-            RequireNativeContainers();
-            var tree = new SpatialTree();
-            tree.Initialize(new SpatialIndexConfig
+            => m_World.EnsureSpatialTree(new SpatialIndexConfig
             {
                 Dimension = dim,
                 WorldCenter = center,
                 WorldHalfExtent = halfExtent,
                 MaxDepth = maxDepth,
                 NodeCapacity = nodeCapacity,
-            }, Allocator.Persistent);
-            return tree;
-        }
+            });
 
         private static float3 RandomPoint(System.Random r, float range)
             => new float3(
@@ -60,7 +71,7 @@ namespace Ember.Core.Tests
             return hits;
         }
 
-        private static HashSet<int> QueryIndices(ref SpatialTree tree, float3 min, float3 max,
+        private static HashSet<int> QueryIndices(SpatialTreeView tree, float3 min, float3 max,
             NativeList<Entity> buffer)
         {
             buffer.Clear();
@@ -79,7 +90,7 @@ namespace Ember.Core.Tests
 
             Assert.That(tree.Count, Is.EqualTo(2));
             Assert.That(tree.Contains(E(1)), Is.True);
-            tree.Dispose();
+            Assert.That(tree.Contains(E(3)), Is.False);
         }
 
         [Test]
@@ -88,7 +99,7 @@ namespace Ember.Core.Tests
             var tree = CreateTree(SpatialDimension.QuadXY, float3.zero, new float3(100f));
             tree.Insert(E(1), float3.zero, new float3(1f));
 
-            tree.Dispose();
+            Assert.Throws<InvalidOperationException>(() => tree.Insert(E(1), float3.zero, new float3(1f)));
         }
 
         [Test]
@@ -114,10 +125,9 @@ namespace Ember.Core.Tests
                 float size = (float)random.NextDouble() * 30f + 1f;
                 float3 qs = new float3(size);
                 var expected = BruteForceAABB(items, qc - qs, qc + qs);
-                var actual = QueryIndices(ref tree, qc - qs, qc + qs, buffer);
+                var actual = QueryIndices(tree, qc - qs, qc + qs, buffer);
                 Assert.That(actual, Is.EquivalentTo(expected), $"query {q} mismatch");
             }
-            tree.Dispose();
             buffer.Dispose();
         }
 
@@ -148,10 +158,9 @@ namespace Ember.Core.Tests
             {
                 float3 qc = RandomPoint(random, 110f);
                 float3 qs = new float3(20f);
-                Assert.That(QueryIndices(ref tree, qc - qs, qc + qs, buffer),
+                Assert.That(QueryIndices(tree, qc - qs, qc + qs, buffer),
                     Is.EquivalentTo(BruteForceAABB(items, qc - qs, qc + qs)));
             }
-            tree.Dispose();
             buffer.Dispose();
         }
 
@@ -170,7 +179,6 @@ namespace Ember.Core.Tests
             buffer.Clear();
             tree.QueryAABB(new float3(-81f, -81f, -1f), new float3(-79f, -79f, 1f), ref buffer);
             Assert.That(buffer.Length, Is.EqualTo(0));
-            tree.Dispose();
             buffer.Dispose();
         }
 
@@ -192,7 +200,6 @@ namespace Ember.Core.Tests
             Assert.That(tree.Count, Is.EqualTo(200));
             tree.QueryAABB(new float3(-2f, -2f, -1f), new float3(2f, 2f, 1f), ref buffer);
             Assert.That(buffer.Length, Is.EqualTo(200));
-            tree.Dispose();
             buffer.Dispose();
         }
 
@@ -229,7 +236,6 @@ namespace Ember.Core.Tests
                 }
                 Assert.That(actual, Is.EquivalentTo(expected), $"sphere query {q} mismatch");
             }
-            tree.Dispose();
             buffer.Dispose();
         }
 
@@ -248,7 +254,6 @@ namespace Ember.Core.Tests
             Assert.That(tree.Contains(E(1)), Is.True);
             Assert.That(tree.Contains(E(2)), Is.False);
             Assert.That(tree.Count, Is.EqualTo(1));
-            tree.Dispose();
         }
 
         [Test]
@@ -260,7 +265,6 @@ namespace Ember.Core.Tests
             var buffer = new NativeList<Entity>(8, Allocator.Persistent);
             tree.QueryAABB(new float3(9000f, -5f, -1f), new float3(11000f, 5f, 1f), ref buffer);
             Assert.That(buffer.Length, Is.EqualTo(1));
-            tree.Dispose();
             buffer.Dispose();
         }
 
@@ -273,7 +277,6 @@ namespace Ember.Core.Tests
             var buffer = new NativeList<Entity>(8, Allocator.Persistent);
             tree.QueryAABB(new float3(9f, -1000f, 9f), new float3(11f, 1000f, 11f), ref buffer);
             Assert.That(buffer.Length, Is.EqualTo(1));
-            tree.Dispose();
             buffer.Dispose();
         }
 
@@ -293,7 +296,6 @@ namespace Ember.Core.Tests
 
             tree.Insert(E(1000), float3.zero, new float3(1f));
             Assert.That(tree.Contains(E(1000)), Is.True);
-            tree.Dispose();
             buffer.Dispose();
         }
 
@@ -318,10 +320,9 @@ namespace Ember.Core.Tests
                 float3 qc = RandomPoint(random, 110f);
                 float size = (float)random.NextDouble() * 30f + 1f;
                 float3 qs = new float3(size);
-                Assert.That(QueryIndices(ref tree, qc - qs, qc + qs, buffer),
+                Assert.That(QueryIndices(tree, qc - qs, qc + qs, buffer),
                     Is.EquivalentTo(BruteForceAABB(items, qc - qs, qc + qs)), $"query {q} mismatch");
             }
-            tree.Dispose();
             buffer.Dispose();
         }
 
@@ -338,8 +339,20 @@ namespace Ember.Core.Tests
 
             Assert.That(tree.Remove(E(1)), Is.True);
             Assert.That(tree.Count, Is.EqualTo(0));
-            tree.Dispose();
             buffer.Dispose();
+        }
+
+        [Test]
+        public void EntitySlotReuse_StaleMappingRejected()
+        {
+            var tree = CreateTree(SpatialDimension.QuadXY, float3.zero, new float3(100f));
+            tree.Insert(E(7), new float3(10f, 10f, 0f), new float3(1f)); // Index 7, Version 1
+            tree.Remove(E(7));
+
+            // 同 Index 不同 Version 的"新实体"不得命中旧映射
+            var recycled = new Entity(7, 2);
+            Assert.That(tree.Contains(recycled), Is.False);
+            Assert.That(tree.Remove(recycled), Is.False);
         }
     }
 }

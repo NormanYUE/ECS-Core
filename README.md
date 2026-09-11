@@ -53,7 +53,7 @@
 |---|---|
 | `BoundingVolume` | 本地空间 AABB（`Center`/`Extents`），空间索引与视锥剔除的输入 |
 | `WorldBounds` | 世界空间 AABB，由 `WorldBoundsSystem`（Job·Burst）每帧计算一次，索引与剔除共享 |
-| `SpatialTree` | 0GC 空间划分树（四叉/八叉统一），纯非托管 struct **单例组件**：SoA 原生容器（NativeList/NativeParallelHashMap）+ 空闲链表，稳态零分配；插入/删除/移动 O(log n)~O(1)；`QueryAABB`/`QuerySphere` 填充调用方 `NativeList<Entity>`；四叉树支持 XY/XZ 平面；消失实体由标记清扫剔除（延迟一帧）；Burst 可编译形态 |
+| `SpatialTree` | 0GC 空间划分树（四叉/八叉统一），纯 blittable **单例组件**（标量 + World 托管 buffer 句柄）——**无需 Dispose**，存储随 World 自动释放。插入/删除/移动 O(log n)~O(1)；四叉树支持 XY/XZ 平面；消失实体由标记清扫剔除（延迟一帧）；Burst 可编译形态。全部操作经 `world.GetSpatialTree()` 返回的 `SpatialTreeView` 进行（Insert/Remove/Update/QueryAABB/QuerySphere） |
 | `SpatialIndexConfig`（单例） | 索引配置：维度（QuadXY/QuadXZ/Octree）、世界范围、最大深度、节点容量 |
 | `SpatialSetupSystem` | 串行。为新实体自动补 `WorldBounds` / `VisibilityState`（每实体一次），**必须先于其他空间系统注册** |
 | `WorldBoundsSystem` | **Job·Burst**。`LocalToWorld`+`BoundingVolume` → `WorldBounds` |
@@ -77,7 +77,7 @@
 |---|---|
 | `PresentationPrefab` | 预制体 Id（int）。托管引用进不了组件，Id 由业务侧在池中注册映射 |
 | `PresentationLink` | 实体↔同步槽位（桥分配/移除，业务勿动） |
-| `PresentationCommands`（单例） | 命令队列 + 存活跟踪 + TRS 同步数组，纯非托管原生容器 |
+| `PresentationCommands`（单例） | 命令队列 + 存活跟踪 + TRS 同步数组，纯非托管原生容器（由桥 Dispose） |
 | `TransformDecompose` | 纯数学：世界矩阵 → TRS 分解（正交基假设，忽略 shear） |
 | `PresentationCommandSystem` | 串行。视口边沿产 Spawn/Despawn 命令 + 盖戳清扫销毁实体（回收延迟一帧）。串行原因：框架 chunk job 无 Entity 访问器，命令必须带实体 Id |
 | `PresentationSyncSystem` | **Job·Burst**。可见实体 `LocalToWorld` → TRS 写同步槽位（每帧热路径） |
@@ -157,25 +157,16 @@ world.SetComponent(cfg, new SpatialIndexConfig
 var cam = world.GetOrCreateSingleton<CameraFrustum>();
 world.SetComponent(cam, FrustumMath.FromViewProjection(Camera.main.projectionMatrix * Camera.main.worldToCameraMatrix));
 
-// 游戏代码：范围查询（树是 SpatialTree 单例组件，必须经 ref 使用；
-// 首帧系统未运行时单例尚未初始化，用 IsInitialized 判断）
-if (world.TryGetSingleton<SpatialTree>(out var treeOwner))
+// 游戏代码：范围查询（树是 SpatialTree 单例组件，存储由 World 托管、
+// 无需任何 Dispose；首帧系统未运行时尚未初始化，用 TryGetSpatialTree 判断）
+if (world.TryGetSpatialTree(out var tree))
 {
-    ref var tree = ref world.GetComponent<SpatialTree>(treeOwner);
-    if (tree.IsInitialized)
-    {
-        var buffer = new NativeList<Entity>(256, Allocator.TempJob);
-        tree.QuerySphere(explosionCenter, radius, ref buffer);
-        // ... 用完 buffer.Dispose()
-    }
+    var buffer = new NativeList<Entity>(256, Allocator.TempJob);
+    tree.QuerySphere(explosionCenter, radius, ref buffer);
+    // ... 用完 buffer.Dispose()
 }
 
-// 退出前（销毁 ECSManager 之前）：释放树的原生容器
-if (world.TryGetSingleton<SpatialTree>(out var teardownOwner))
-{
-    ref var tree = ref world.GetComponent<SpatialTree>(teardownOwner);
-    if (tree.IsInitialized) tree.Dispose();
-}
+// 退出：ECSManager.Dispose() → World.Dispose 自动释放树的全部存储
 ```
 
 ## 使用示例
@@ -228,7 +219,7 @@ csproj 通过以下 MSBuild 属性定位依赖，默认值指向本机相邻仓�
 3. 命名空间统一 `Ember.Core`，按分类放入 `src/<Category>/`
 4. 源生成器会自动完成注册；若新增程序集，需在首个 `World` 创建前加载
 5. **静态禁令**：组件、系统与普通类不得声明静态成员/方法。纯函数数学集中于工具类
-   （如 `FrustumMath`），World 级全局数据结构（如空间树）以单例组件存放，业务侧经
-   标准单例 API 自取。`const` 编译期字面量不受此限。
+   （如 `FrustumMath`），World 级全局数据结构（如空间树）以单例组件存放（数据存 World
+   托管 buffer，经 `world.GetSpatialTree()` 视图操作）。`const` 编译期字面量不受此限。
 6. **一文件一类型**：每个文件只定义一个顶层类型（class/struct/enum/interface），
    文件名与类型名一致；连 Job 作业与其宿主系统、枚举与其使用方也必须拆分为独立文件。
