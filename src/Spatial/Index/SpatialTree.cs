@@ -1,110 +1,185 @@
 using System;
-using System.Collections.Generic;
+using Unity.Collections;
 using Unity.Mathematics;
 
 namespace Ember.Core
 {
     /// <summary>
-    /// 空间划分树引擎（四叉/八叉共用核心）。SoA 预分配数组 + 空闲链表 + 碰撞分配，
-    /// 稳态运行零 GC；非线程安全，设计上由单个系统串行维护。
+    /// 空间划分树（四叉/八叉统一实现），纯非托管 struct，以单例组件形态存放：
+    /// 一个 World 一棵，由 <see cref="SpatialIndexSystem"/> 首次 tick 时创建并初始化，
+    /// 业务侧退出前（销毁 ECSManager 之前）对组件 ref 调用 <see cref="Dispose"/> 释放原生容器。
     ///
-    /// 节点按 ChildCount 成块分配（子节点索引连续）；元素通过 Entity 字典直索引，
-    /// 插入/删除/移动均为 O(log n) 或 O(1)。AABB 元素若无法完整落入任一子节点，
-    /// 则停留在当前节点；越出根范围的元素保留在根节点。
+    /// 存储为 SoA 原生容器 + 空闲链表 + 碰撞分配，稳态零 GC；非线程安全，设计上由
+    /// 单个系统串行维护。节点按 ChildCount 成块分配（子节点索引连续）；元素通过
+    /// Entity 哈希直索引，插入/删除/移动均为 O(log n) 或 O(1)。AABB 元素若无法完整
+    /// 落入任一子节点则停留在当前节点；越出根范围的元素保留在根节点。
+    ///
+    /// struct 语义：必须通过 ref 使用（<c>ref world.GetComponent<SpatialTree>(owner)</c>），
+    /// 值拷贝会丢失对内部容器的写入。全部为 Burst 可编译形态。
+    ///
+    /// 移除采用标记清扫：<see cref="BeginTick"/> 开启一轮事务，<see cref="Update"/>
+    /// 标记存活，<see cref="EndTick"/> 移除本轮未出现的实体——覆盖实体销毁、组件
+    /// 被移除等一切消失路径，代价是移除延迟一帧。
     /// </summary>
-    public abstract class SpatialTree
+    public struct SpatialTree : ISingletonComponent, IDisposable
     {
-        protected const int Null = -1;
+        private const int Null = -1;
         private const float k_InactiveAxisHalfExtent = 1e9f;
 
-        private readonly int m_MaxDepth;
-        private readonly int m_NodeCapacity;
+        // ---- 配置 ----
+        private int m_MaxDepth;
+        private int m_NodeCapacity;
+        private int m_ChildCount; // 四叉=4，八叉=8
+        private int m_Axis1;      // 四叉第二激活轴（XY=1，XZ=2）；八叉不用
+        private float3 m_RootCenter;
+        private float3 m_RootHalfExtent;
 
         // ---- 节点存储（块 = ChildCount 个连续节点）----
-        private int[] m_NodeParent;
-        private int[] m_NodeFirstChild; // -1 = 叶子；释放块时用作空闲链表 next
-        private int[] m_NodeElemHead;
-        private int[] m_NodeElemCount;
-        private float3[] m_NodeCenter;
-        private float3[] m_NodeHalfExtent;
-        private int m_FreeBlockHead = Null;
+        private NativeList<int> m_NodeParent;
+        private NativeList<int> m_NodeFirstChild; // -1 = 叶子；释放块时用作空闲链表 next
+        private NativeList<int> m_NodeElemHead;
+        private NativeList<int> m_NodeElemCount;
+        private NativeList<float3> m_NodeCenter;
+        private NativeList<float3> m_NodeHalfExtent;
+        private int m_FreeBlockHead;
         private int m_NodeHighWater; // 已碰撞分配的最大节点索引（不含）
 
         // ---- 元素存储 ----
-        private Entity[] m_ElemEntity;
-        private float3[] m_ElemCenter;
-        private float3[] m_ElemHalfExtent;
-        private int[] m_ElemNext;
-        private int[] m_ElemPrev;
-        private int[] m_ElemNode;
-        private int m_FreeElemHead = Null;
+        private NativeList<Entity> m_ElemEntity;
+        private NativeList<float3> m_ElemCenter;
+        private NativeList<float3> m_ElemHalfExtent;
+        private NativeList<int> m_ElemNext;
+        private NativeList<int> m_ElemPrev;
+        private NativeList<int> m_ElemNode;
+        private NativeList<int> m_ElemStamp; // 标记清扫：元素最后被 Update 触及的 tick 号
+        private int m_FreeElemHead;
         private int m_ElemHighWater;
 
-        // ---- 查询栈（复用，避免每次查询分配）----
-        private int[] m_QueryStack = new int[64];
+        // ---- 索引与暂存 ----
+        private NativeParallelHashMap<Entity, int> m_ByEntity;
+        private NativeList<int> m_QueryStack;      // 查询栈复用，避免每次查询分配
+        private NativeList<Entity> m_SweepScratch; // 清扫收集缓冲
 
-        private readonly Dictionary<Entity, int> m_ByEntity = new Dictionary<Entity, int>();
-
-        /// <summary>树中元素总数。</summary>
-        public int Count { get; private set; }
-
-        /// <summary>每个节点的子节点数（四叉=4，八叉=8）。</summary>
-        protected abstract int ChildCount { get; }
-
-        /// <summary>根节点中心。</summary>
-        public float3 RootCenter => m_NodeCenter[0];
-
-        /// <summary>根节点半范围。</summary>
-        public float3 RootHalfExtent => m_NodeHalfExtent[0];
-
-        protected SpatialTree(float3 rootCenter, float3 rootHalfExtent, int maxDepth, int nodeCapacity)
-        {
-            if (maxDepth < 1) throw new ArgumentOutOfRangeException(nameof(maxDepth), "maxDepth must be >= 1");
-            if (nodeCapacity < 1) throw new ArgumentOutOfRangeException(nameof(nodeCapacity), "nodeCapacity must be >= 1");
-            m_MaxDepth = maxDepth;
-            m_NodeCapacity = nodeCapacity;
-
-            int blockNodes = ChildCount;
-            m_NodeParent = new int[blockNodes * 4];
-            m_NodeFirstChild = new int[blockNodes * 4];
-            m_NodeElemHead = new int[blockNodes * 4];
-            m_NodeElemCount = new int[blockNodes * 4];
-            m_NodeCenter = new float3[blockNodes * 4];
-            m_NodeHalfExtent = new float3[blockNodes * 4];
-
-            m_ElemEntity = new Entity[64];
-            m_ElemCenter = new float3[64];
-            m_ElemHalfExtent = new float3[64];
-            m_ElemNext = new int[64];
-            m_ElemPrev = new int[64];
-            m_ElemNode = new int[64];
-
-            AllocateBlock(out int root);
-            InitNode(root, Null, rootCenter, rootHalfExtent);
-        }
-
-        /// <summary>非激活轴（四叉树忽略的深度轴）使用的超大半范围。</summary>
-        protected static float InactiveAxisHalfExtent => k_InactiveAxisHalfExtent;
-
-        /// <summary>读取节点中心（子类计算子槽位/边界用）。</summary>
-        protected float3 NodeCenterAt(int node) => m_NodeCenter[node];
-
-        /// <summary>读取节点半范围（子类计算子槽位/边界用）。</summary>
-        protected float3 NodeHalfExtentAt(int node) => m_NodeHalfExtent[node];
+        private int m_TickStamp;
 
         /// <summary>
-        /// 计算元素完整落入的子节点槽位 [0, ChildCount)；
-        /// 跨越或越出所有子节点时返回 -1（元素应停留在当前节点）。
+        /// 树中元素总数。
         /// </summary>
-        protected abstract int ComputeChildSlot(int nodeIndex, float3 elemCenter, float3 elemHalfExtent);
+        public int Count { get; private set; }
 
-        /// <summary>计算子节点边界。</summary>
-        protected abstract void GetChildBounds(int nodeIndex, int slot, out float3 center, out float3 halfExtent);
+        /// <summary>
+        /// 是否已初始化。单例组件的默认值为未初始化，需 <see cref="Initialize"/> 一次。
+        /// </summary>
+        public bool IsInitialized => m_ByEntity.IsCreated;
 
-        /// <summary>元素是否已登记。</summary>
-        public bool Contains(Entity entity) => m_ByEntity.ContainsKey(entity);
+        /// <summary>
+        /// 根节点中心。
+        /// </summary>
+        public float3 RootCenter => m_RootCenter;
 
-        /// <summary>插入元素。实体已存在时抛异常（请改用 <see cref="Update"/>）。</summary>
+        /// <summary>
+        /// 根节点半范围。
+        /// </summary>
+        public float3 RootHalfExtent => m_RootHalfExtent;
+
+        /// <summary>
+        /// 按配置分配原生容器并建树。仅可对未初始化的树调用一次。
+        /// </summary>
+        public void Initialize(in SpatialIndexConfig config, Allocator allocator)
+        {
+            if (IsInitialized) throw new InvalidOperationException("SpatialTree: already initialized");
+            if (config.MaxDepth < 1) throw new ArgumentOutOfRangeException(nameof(config), "MaxDepth must be >= 1");
+            if (config.NodeCapacity < 1) throw new ArgumentOutOfRangeException(nameof(config), "NodeCapacity must be >= 1");
+
+            m_MaxDepth = config.MaxDepth;
+            m_NodeCapacity = config.NodeCapacity;
+            m_RootCenter = config.WorldCenter;
+
+            switch (config.Dimension)
+            {
+                case SpatialDimension.QuadXY:
+                    m_ChildCount = 4;
+                    m_Axis1 = 1;
+                    m_RootHalfExtent = new float3(config.WorldHalfExtent.x, config.WorldHalfExtent.x,
+                        k_InactiveAxisHalfExtent);
+                    break;
+                case SpatialDimension.QuadXZ:
+                    m_ChildCount = 4;
+                    m_Axis1 = 2;
+                    m_RootHalfExtent = new float3(config.WorldHalfExtent.x, k_InactiveAxisHalfExtent,
+                        config.WorldHalfExtent.x);
+                    break;
+                default:
+                    m_ChildCount = 8;
+                    m_Axis1 = 1;
+                    m_RootHalfExtent = config.WorldHalfExtent;
+                    break;
+            }
+
+            int initialNodes = m_ChildCount * 4;
+            m_NodeParent = NewList<int>(initialNodes, allocator);
+            m_NodeFirstChild = NewList<int>(initialNodes, allocator);
+            m_NodeElemHead = NewList<int>(initialNodes, allocator);
+            m_NodeElemCount = NewList<int>(initialNodes, allocator);
+            m_NodeCenter = NewList<float3>(initialNodes, allocator);
+            m_NodeHalfExtent = NewList<float3>(initialNodes, allocator);
+
+            const int initialElems = 64;
+            m_ElemEntity = NewList<Entity>(initialElems, allocator);
+            m_ElemCenter = NewList<float3>(initialElems, allocator);
+            m_ElemHalfExtent = NewList<float3>(initialElems, allocator);
+            m_ElemNext = NewList<int>(initialElems, allocator);
+            m_ElemPrev = NewList<int>(initialElems, allocator);
+            m_ElemNode = NewList<int>(initialElems, allocator);
+            m_ElemStamp = NewList<int>(initialElems, allocator);
+
+            m_ByEntity = new NativeParallelHashMap<Entity, int>(initialElems, allocator);
+            m_QueryStack = NewList<int>(64, allocator);
+            m_SweepScratch = new NativeList<Entity>(64, allocator);
+
+            m_FreeBlockHead = Null;
+            m_NodeHighWater = 0;
+            m_FreeElemHead = Null;
+            m_ElemHighWater = 0;
+            m_TickStamp = 0;
+            Count = 0;
+
+            AllocateBlock(out int root);
+            InitNode(root, Null, m_RootCenter, m_RootHalfExtent);
+        }
+
+        /// <summary>
+        /// 释放全部原生容器。业务侧在销毁 ECSManager 前对单例组件调用一次。
+        /// </summary>
+        public void Dispose()
+        {
+            if (!IsInitialized) return;
+            m_NodeParent.Dispose();
+            m_NodeFirstChild.Dispose();
+            m_NodeElemHead.Dispose();
+            m_NodeElemCount.Dispose();
+            m_NodeCenter.Dispose();
+            m_NodeHalfExtent.Dispose();
+            m_ElemEntity.Dispose();
+            m_ElemCenter.Dispose();
+            m_ElemHalfExtent.Dispose();
+            m_ElemNext.Dispose();
+            m_ElemPrev.Dispose();
+            m_ElemNode.Dispose();
+            m_ElemStamp.Dispose();
+            m_ByEntity.Dispose();
+            m_QueryStack.Dispose();
+            m_SweepScratch.Dispose();
+        }
+
+        /// <summary>
+        /// 元素是否已登记。
+        /// </summary>
+        public bool Contains(Entity entity) => IsInitialized && m_ByEntity.ContainsKey(entity);
+
+        /// <summary>
+        /// 插入元素。实体已存在时抛异常（请改用 <see cref="Update"/>）。
+        /// </summary>
         public void Insert(Entity entity, float3 center, float3 halfExtent)
         {
             if (m_ByEntity.ContainsKey(entity))
@@ -126,22 +201,25 @@ namespace Ember.Core
                     break; // 无法完整落入子节点 → 停留在当前节点
                 }
 
-                if (m_NodeElemCount[node] < m_NodeCapacity || depth >= m_MaxDepth)
-                    break; // 叶子未满或已达最大深度 → 插入此处
+                if (m_NodeElemCount[node] < m_NodeCapacity || depth >= m_MaxDepth) break; // 叶子未满或已达最大深度 → 插入此处
 
                 Subdivide(node, depth);
                 // 细分后当前节点有了子节点，回到循环重新选择
             }
 
-            Attach(AllocElement(entity, center, halfExtent), node);
+            int elem = AllocElement(entity, center, halfExtent);
+            m_ElemStamp[elem] = m_TickStamp; // 新插入视为本轮存活
+            Attach(elem, node);
         }
 
-        /// <summary>移除元素。不存在时返回 false。</summary>
+        /// <summary>
+        /// 移除元素。不存在时返回 false。
+        /// </summary>
         public bool Remove(Entity entity)
         {
             if (!m_ByEntity.TryGetValue(entity, out int elem)) return false;
             int node = m_ElemNode[elem];
-            Detach(elem, node);
+            Unlink(elem, node);
             FreeElement(elem);
             m_ByEntity.Remove(entity);
             Count--;
@@ -150,8 +228,8 @@ namespace Ember.Core
         }
 
         /// <summary>
-        /// 更新元素边界。新边界仍在原节点内时原地更新（O(1)，最常见路径）；
-        /// 否则移除重插。实体不存在时等同 <see cref="Insert"/>。
+        /// 更新元素边界并标记本轮存活。新边界仍在原节点内时原地更新（O(1)，
+        /// 最常见路径）；否则移除重插。实体不存在时等同 <see cref="Insert"/>。
         /// </summary>
         public void Update(Entity entity, float3 center, float3 halfExtent)
         {
@@ -166,14 +244,38 @@ namespace Ember.Core
             {
                 m_ElemCenter[elem] = center;
                 m_ElemHalfExtent[elem] = halfExtent;
+                m_ElemStamp[elem] = m_TickStamp;
                 return;
             }
 
             Remove(entity);
-            Insert(entity, center, halfExtent);
+            Insert(entity, center, halfExtent); // Insert 内部已打 stamp
         }
 
-        /// <summary>清空全部元素并保持树形收缩到根节点（数组容量保留，无分配）。</summary>
+        /// <summary>
+        /// 开启一轮标记清扫事务（每 tick 由维护系统调用一次，与 <see cref="EndTick"/> 配对）。
+        /// </summary>
+        public void BeginTick() => m_TickStamp++;
+
+        /// <summary>
+        /// 结束事务：移除本轮未被 <see cref="Update"/> 触及的实体。覆盖实体销毁、
+        /// 包围组件被移除等一切消失路径，代价是移除延迟一帧。
+        /// </summary>
+        public void EndTick()
+        {
+            m_SweepScratch.Clear();
+            foreach (var kv in m_ByEntity)
+            {
+                if (m_ElemStamp[kv.Value] != m_TickStamp)
+                    m_SweepScratch.Add(kv.Key);
+            }
+            for (int i = 0; i < m_SweepScratch.Length; i++)
+                Remove(m_SweepScratch[i]);
+        }
+
+        /// <summary>
+        /// 清空全部元素并保持树形收缩到根节点（容器容量保留，无分配）。
+        /// </summary>
         public void Clear()
         {
             m_ByEntity.Clear();
@@ -181,100 +283,144 @@ namespace Ember.Core
             m_ElemHighWater = 0;
             m_FreeElemHead = Null;
             m_FreeBlockHead = Null;
-            m_NodeHighWater = ChildCount; // 保留根块
-            InitNode(0, Null, m_NodeCenter[0], m_NodeHalfExtent[0]);
+            m_NodeHighWater = m_ChildCount; // 保留根块
+            InitNode(0, Null, m_RootCenter, m_RootHalfExtent);
         }
 
-        /// <summary>AABB 范围查询（min/max 为闭区间）。</summary>
-        public void QueryAABB<TVisitor>(float3 min, float3 max, ref TVisitor visitor)
-            where TVisitor : ISpatialVisitor
+        /// <summary>
+        /// AABB 范围查询（min/max 为闭区间），命中实体追加到调用方容器。
+        /// </summary>
+        public void QueryAABB(float3 min, float3 max, ref NativeList<Entity> results)
         {
             float3 queryCenter = (min + max) * 0.5f;
             float3 queryHalf = (max - min) * 0.5f;
-            Query(min, max, queryCenter, queryHalf, isSphere: false, sphereRadiusSq: 0f, ref visitor);
+            Query(min, max, queryCenter, queryHalf, false, 0f, ref results);
         }
 
-        /// <summary>球体范围查询。</summary>
-        public void QuerySphere<TVisitor>(float3 center, float radius, ref TVisitor visitor)
-            where TVisitor : ISpatialVisitor
+        /// <summary>
+        /// 球体范围查询，命中实体追加到调用方容器。
+        /// </summary>
+        public void QuerySphere(float3 center, float radius, ref NativeList<Entity> results)
         {
             float3 half = new float3(radius);
-            Query(center - half, center + half, center, half, isSphere: true, sphereRadiusSq: radius * radius,
-                ref visitor);
+            Query(center - half, center + half, center, half, true, radius * radius, ref results);
         }
 
-        /// <summary>AABB 查询并把结果填充到调用方列表（返回命中数）。</summary>
-        public int QueryAABB(float3 min, float3 max, List<Entity> results)
-        {
-            var visitor = new EntityListVisitor(results);
-            QueryAABB(min, max, ref visitor);
-            return results.Count;
-        }
-
-        /// <summary>球体查询并把结果填充到调用方列表（返回命中数）。</summary>
-        public int QuerySphere(float3 center, float radius, List<Entity> results)
-        {
-            var visitor = new EntityListVisitor(results);
-            QuerySphere(center, radius, ref visitor);
-            return results.Count;
-        }
-
-        private void Query<TVisitor>(float3 min, float3 max, float3 queryCenter, float3 queryHalf,
-            bool isSphere, float sphereRadiusSq, ref TVisitor visitor)
-            where TVisitor : ISpatialVisitor
+        private void Query(float3 min, float3 max, float3 queryCenter, float3 queryHalf, bool isSphere,
+            float sphereRadiusSq, ref NativeList<Entity> results)
         {
             if (Count == 0) return;
 
-            int[] stack = m_QueryStack;
             int sp = 0;
-            stack[sp++] = 0;
+            m_QueryStack[sp++] = 0;
 
             while (sp > 0)
             {
-                int node = stack[--sp];
+                int node = m_QueryStack[--sp];
 
                 for (int elem = m_NodeElemHead[node]; elem != Null; elem = m_ElemNext[elem])
                 {
                     if (!ElementIntersects(elem, min, max, queryCenter, isSphere, sphereRadiusSq)) continue;
-                    if (!visitor.Visit(m_ElemEntity[elem], m_ElemCenter[elem], m_ElemHalfExtent[elem]))
-                        return;
+                    results.Add(m_ElemEntity[elem]);
                 }
 
                 int first = m_NodeFirstChild[node];
                 if (first == Null) continue;
 
-                for (int slot = 0; slot < ChildCount; slot++)
+                for (int slot = 0; slot < m_ChildCount; slot++)
                 {
                     int child = first + slot;
                     if (!AabbIntersects(m_NodeCenter[child], m_NodeHalfExtent[child], queryCenter, queryHalf))
                         continue;
-                    if (sp == stack.Length)
-                    {
-                        Array.Resize(ref m_QueryStack, stack.Length * 2);
-                        stack = m_QueryStack;
-                    }
-                    stack[sp++] = child;
+                    if (sp == m_QueryStack.Length)
+                        m_QueryStack.Resize(m_QueryStack.Length * 2, NativeArrayOptions.UninitializedMemory);
+                    m_QueryStack[sp++] = child;
                 }
             }
         }
 
-        private bool ElementIntersects(int elem, float3 min, float3 max, float3 queryCenter,
-            bool isSphere, float sphereRadiusSq)
+        private bool ElementIntersects(int elem, float3 min, float3 max, float3 queryCenter, bool isSphere,
+            float sphereRadiusSq)
         {
             float3 c = m_ElemCenter[elem];
             float3 e = m_ElemHalfExtent[elem];
-            if (!isSphere)
-                return AabbIntersects(c, e, queryCenter, (max - min) * 0.5f);
-
+            if (!isSphere) return AabbIntersects(c, e, queryCenter, (max - min) * 0.5f);
             float3 closest = math.clamp(queryCenter, c - e, c + e);
             return math.distancesq(closest, queryCenter) <= sphereRadiusSq;
         }
 
-        internal static bool AabbIntersects(float3 c1, float3 e1, float3 c2, float3 e2)
+        private bool AabbIntersects(float3 c1, float3 e1, float3 c2, float3 e2)
             => math.all(math.abs(c1 - c2) <= e1 + e2);
 
-        internal static bool ContainedIn(float3 c, float3 e, float3 nodeC, float3 nodeE)
+        private bool ContainedIn(float3 c, float3 e, float3 nodeC, float3 nodeE)
             => math.all(c - e >= nodeC - nodeE) && math.all(c + e <= nodeC + nodeE);
+
+        // ---- 子槽位与边界（四叉/八叉统一）----
+
+        private int ComputeChildSlot(int nodeIndex, float3 elemCenter, float3 elemHalfExtent)
+        {
+            float3 nodeC = m_NodeCenter[nodeIndex];
+            float3 min = elemCenter - elemHalfExtent;
+            float3 max = elemCenter + elemHalfExtent;
+
+            int slot = 0;
+            if (elemCenter.x >= nodeC.x)
+            {
+                if (min.x < nodeC.x) return -1; // 跨中线，无法完整落入
+                slot |= 1;
+            }
+            else if (max.x > nodeC.x) return -1;
+
+            if (m_ChildCount == 8)
+            {
+                if (elemCenter.y >= nodeC.y)
+                {
+                    if (min.y < nodeC.y) return -1;
+                    slot |= 2;
+                }
+                else if (max.y > nodeC.y) return -1;
+
+                if (elemCenter.z >= nodeC.z)
+                {
+                    if (min.z < nodeC.z) return -1;
+                    slot |= 4;
+                }
+                else if (max.z > nodeC.z) return -1;
+            }
+            else
+            {
+                int axis1 = m_Axis1;
+                if (elemCenter[axis1] >= nodeC[axis1])
+                {
+                    if (min[axis1] < nodeC[axis1]) return -1;
+                    slot |= 2;
+                }
+                else if (max[axis1] > nodeC[axis1]) return -1;
+            }
+            return slot;
+        }
+
+        private void GetChildBounds(int nodeIndex, int slot, out float3 center, out float3 halfExtent)
+        {
+            float3 nodeC = m_NodeCenter[nodeIndex];
+            halfExtent = m_NodeHalfExtent[nodeIndex];
+            center = nodeC;
+
+            if (m_ChildCount == 8)
+            {
+                halfExtent *= 0.5f;
+                center.x += (slot & 1) != 0 ? halfExtent.x : -halfExtent.x;
+                center.y += (slot & 2) != 0 ? halfExtent.y : -halfExtent.y;
+                center.z += (slot & 4) != 0 ? halfExtent.z : -halfExtent.z;
+            }
+            else
+            {
+                halfExtent.x *= 0.5f;
+                halfExtent[m_Axis1] *= 0.5f; // 非激活轴保持超大范围
+                center.x += (slot & 1) != 0 ? halfExtent.x : -halfExtent.x;
+                center[m_Axis1] += (slot & 2) != 0 ? halfExtent[m_Axis1] : -halfExtent[m_Axis1];
+            }
+        }
 
         // ---- 子划分与收缩 ----
 
@@ -282,7 +428,7 @@ namespace Ember.Core
         {
             AllocateBlock(out int first);
             m_NodeFirstChild[node] = first;
-            for (int slot = 0; slot < ChildCount; slot++)
+            for (int slot = 0; slot < m_ChildCount; slot++)
             {
                 GetChildBounds(node, slot, out float3 c, out float3 e);
                 InitNode(first + slot, node, c, e);
@@ -310,7 +456,7 @@ namespace Ember.Core
             {
                 int first = m_NodeFirstChild[node];
                 bool allEmptyLeaves = true;
-                for (int slot = 0; slot < ChildCount; slot++)
+                for (int slot = 0; slot < m_ChildCount; slot++)
                 {
                     int child = first + slot;
                     if (m_NodeFirstChild[child] != Null || m_NodeElemCount[child] != 0)
@@ -362,8 +508,6 @@ namespace Ember.Core
             Count++;
         }
 
-        private void Detach(int elem, int node) => Unlink(elem, node);
-
         private void Link(int elem, int node)
         {
             int head = m_NodeElemHead[node];
@@ -395,7 +539,7 @@ namespace Ember.Core
             }
 
             blockStart = m_NodeHighWater;
-            m_NodeHighWater += ChildCount;
+            m_NodeHighWater += m_ChildCount;
             if (m_NodeHighWater > m_NodeParent.Length) GrowNodes();
         }
 
@@ -415,26 +559,34 @@ namespace Ember.Core
             m_NodeHalfExtent[node] = halfExtent;
         }
 
+        private NativeList<T> NewList<T>(int length, Allocator allocator) where T : unmanaged
+        {
+            var list = new NativeList<T>(length, allocator);
+            list.Resize(length, NativeArrayOptions.UninitializedMemory);
+            return list;
+        }
+
         private void GrowElements()
         {
             int capacity = m_ElemEntity.Length * 2;
-            Array.Resize(ref m_ElemEntity, capacity);
-            Array.Resize(ref m_ElemCenter, capacity);
-            Array.Resize(ref m_ElemHalfExtent, capacity);
-            Array.Resize(ref m_ElemNext, capacity);
-            Array.Resize(ref m_ElemPrev, capacity);
-            Array.Resize(ref m_ElemNode, capacity);
+            m_ElemEntity.Resize(capacity, NativeArrayOptions.UninitializedMemory);
+            m_ElemCenter.Resize(capacity, NativeArrayOptions.UninitializedMemory);
+            m_ElemHalfExtent.Resize(capacity, NativeArrayOptions.UninitializedMemory);
+            m_ElemNext.Resize(capacity, NativeArrayOptions.UninitializedMemory);
+            m_ElemPrev.Resize(capacity, NativeArrayOptions.UninitializedMemory);
+            m_ElemNode.Resize(capacity, NativeArrayOptions.UninitializedMemory);
+            m_ElemStamp.Resize(capacity, NativeArrayOptions.UninitializedMemory);
         }
 
         private void GrowNodes()
         {
             int capacity = m_NodeParent.Length * 2;
-            Array.Resize(ref m_NodeParent, capacity);
-            Array.Resize(ref m_NodeFirstChild, capacity);
-            Array.Resize(ref m_NodeElemHead, capacity);
-            Array.Resize(ref m_NodeElemCount, capacity);
-            Array.Resize(ref m_NodeCenter, capacity);
-            Array.Resize(ref m_NodeHalfExtent, capacity);
+            m_NodeParent.Resize(capacity, NativeArrayOptions.UninitializedMemory);
+            m_NodeFirstChild.Resize(capacity, NativeArrayOptions.UninitializedMemory);
+            m_NodeElemHead.Resize(capacity, NativeArrayOptions.UninitializedMemory);
+            m_NodeElemCount.Resize(capacity, NativeArrayOptions.UninitializedMemory);
+            m_NodeCenter.Resize(capacity, NativeArrayOptions.UninitializedMemory);
+            m_NodeHalfExtent.Resize(capacity, NativeArrayOptions.UninitializedMemory);
         }
     }
 }

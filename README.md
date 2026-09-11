@@ -52,9 +52,12 @@
 | 类型 | 说明 |
 |---|---|
 | `BoundingVolume` | 本地空间 AABB（`Center`/`Extents`），空间索引与视锥剔除的输入 |
-| `SpatialTree` / `Quadtree` / `Octree` | 0GC 空间划分树：SoA 预分配数组 + 空闲链表，稳态零分配；插入/删除/移动 O(log n)~O(1)；`QueryAABB`/`QuerySphere` 支持 struct 访问器（零装箱）与调用方列表填充；四叉树支持 XY/XZ 平面 |
+| `WorldBounds` | 世界空间 AABB，由 `WorldBoundsSystem`（Job·Burst）每帧计算一次，索引与剔除共享 |
+| `SpatialTree` | 0GC 空间划分树（四叉/八叉统一），纯非托管 struct **单例组件**：SoA 原生容器（NativeList/NativeParallelHashMap）+ 空闲链表，稳态零分配；插入/删除/移动 O(log n)~O(1)；`QueryAABB`/`QuerySphere` 填充调用方 `NativeList<Entity>`；四叉树支持 XY/XZ 平面；消失实体由标记清扫剔除（延迟一帧）；Burst 可编译形态 |
 | `SpatialIndexConfig`（单例） | 索引配置：维度（QuadXY/QuadXZ/Octree）、世界范围、最大深度、节点容量 |
-| `SpatialIndexSystem` | 每 tick 把 (`LocalToWorld`+`BoundingVolume`) 实体的世界包围盒增量维护进树；实体销毁自动剔除 |
+| `SpatialSetupSystem` | 串行。为新实体自动补 `WorldBounds` / `VisibilityState`（每实体一次），**必须先于其他空间系统注册** |
+| `WorldBoundsSystem` | **Job·Burst**。`LocalToWorld`+`BoundingVolume` → `WorldBounds` |
+| `SpatialIndexSystem` | 串行。读 `WorldBounds` 增量维护树；实体销毁自动剔除 |
 | `SpatialIndex` | 静态注册表，`SpatialIndex.GetTree(world)` 供任意代码做范围查询 |
 
 ### Culling（视锥剔除）
@@ -62,29 +65,117 @@
 | 类型 | 说明 |
 |---|---|
 | `CameraFrustum`（单例） | 6 个归一化视锥平面（法线朝内），由桥接代码每帧从相机 VP 矩阵写入 |
-| `InView`（标签） | 视口内标记，仅在进出视口边沿增删（结构变更正比于边沿实体数） |
-| `FrustumMath` | 纯数学：`FromViewProjection` 平面提取（Gribb-Hartmann）、球/AABB 视锥测试、`TransformAABB` 世界盒换算 |
-| `FrustumCullingSystem` | 世界包围盒-视锥测试，维护 `InView` 标记；无相机单例时整帧跳过 |
+| `VisibilityState` | Job 可写的可见性字节标志（bit0=当前视口内，bit1=上一帧视口内；`EnteredView`/`ExitedView` 边沿属性） |
+| `InView`（标签） | 视口内查询过滤标记，仅在进出视口边沿增删（结构变更正比于边沿实体数） |
+| `FrustumMath` | 纯数学：`FromViewProjection` 平面提取（Gribb-Hartmann）、球/AABB 视锥测试、`TransformAABB` 世界盒换算（Burst 兼容） |
+| `FrustumCullingSystem` | **Job·Burst**。包围盒-视锥测试写入 `VisibilityState`；无相机单例时整帧跳过 |
+| `VisibilityApplySystem` | 串行。diff 状态与标签，边沿增删 `InView`（Job 无法做结构变更，拆出此系统保住并行） |
+
+### Presentation（GameObject 表现层）
+
+| 类型 | 说明 |
+|---|---|
+| `PresentationPrefab` | 预制体 Id（int）。托管引用进不了组件，Id 由业务侧在池中注册映射 |
+| `PresentationLink` | 实体↔同步槽位（桥分配/移除，业务勿动） |
+| `PresentationCommands`（单例） | 命令队列 + 存活跟踪 + TRS 同步数组，纯非托管原生容器 |
+| `TransformDecompose` | 纯数学：世界矩阵 → TRS 分解（正交基假设，忽略 shear） |
+| `PresentationCommandSystem` | 串行。视口边沿产 Spawn/Despawn 命令 + 盖戳清扫销毁实体（回收延迟一帧）。串行原因：框架 chunk job 无 Entity 访问器，命令必须带实体 Id |
+| `PresentationSyncSystem` | **Job·Burst**。可见实体 `LocalToWorld` → TRS 写同步槽位（每帧热路径） |
+| `PresentationSystemGroup` | 表现层系统组；须在 `SpatialSystemGroup` 之后注册 |
+| `IGameObjectPool` / `GameObjectPool` | 池接口（业务可换实现）/ Core 默认池（分桶栈 + Prewarm） |
+| `GameObjectPresentation` | 托管桥：每帧 Tick 后 `Sync()` drain 命令 + `TransformAccessArray`+`IJobParallelForTransform`(Burst) 批量回写 GO Transform；`Dispose()` 统一释放 |
+
+### 系统管线与注册顺序
+
+管线已封装为 `SpatialSystemGroup`，业务侧一行接入（组内注册顺序即管线顺序，依赖图再按读写冲突自动分层）：
+
+```csharp
+manager.GetTicker(updateIdx).Register<SpatialSystemGroup>();
+```
+
+```
+SpatialSetupSystem        (串行, 补齐组件, 结构变更屏障)
+WorldBoundsSystem         (Job·Burst, 算世界AABB)
+FrustumCullingSystem      (Job·Burst, 写 VisibilityState)
+VisibilityApplySystem     (串行, 边沿增删 InView 标签)
+SpatialIndexSystem        (串行, 维护空间树)
+```
+
+GameObject 表现层另成一组，依赖剔除产物，须在其后注册：
+
+```csharp
+manager.GetTicker(updateIdx).Register<PresentationSystemGroup>();
+```
+
+```
+PresentationCommandSystem  (串行, 边沿产命令 + 销毁清扫)
+PresentationSyncSystem     (Job·Burst, TRS 写同步槽位)
+```
+
+GameObject 操作不在系统内——业务侧每帧 Tick 后驱动桥：
+
+```csharp
+var pool = new GameObjectPool();
+pool.RegisterPrefab(1, enemyPrefabGo);
+pool.Prewarm(1, 64); // 可选：预热消除实例化尖峰
+var presentation = new GameObjectPresentation(world, pool); // 默认池可省参
+
+// 每帧：manager.Tick(...); 之后
+presentation.Sync();
+
+// 退出前（销毁 manager 之前）
+presentation.Dispose();
+```
+
+业务侧自定义池：实现 `IGameObjectPool` 注入构造；或完全自写消费者直接 drain
+`PresentationCommands` 单例命令队列。
+
+依赖图按读写冲突声明自动排序上下游；两个串行系统的屏障语义保证 Job 系统在其间并行调度。
+Burst 为**显式策略**（`[assembly: EmberJobCompilation(EmberJobCompilationMode.Burst)]`）：
+Unity.Burst 不可用时编译期报 EMBER005、运行时 BuildAccess 失败，绝不静默回退托管调度。
+生成的 `WorldBoundsSystemBurstJob` / `FrustumCullingSystemBurstJob` 调度器随 DLL 分发，
+消费工程只需安装 `com.unity.burst`（包依赖已声明）。
 
 ## 系统使用示例
 
 ```csharp
-// 启动：注册系统（建议在渲染/逻辑系统之前）
-manager.GetTicker(updateIdx).Register<SpatialIndexSystem>();
-manager.GetTicker(updateIdx).Register<FrustumCullingSystem>();
+// 启动：一行注册整条空间/剔除管线
+manager.GetTicker(updateIdx).Register<SpatialSystemGroup>();
 
-// 配置空间索引（可选，缺省用 SpatialIndexConfig.Default）
+// 配置空间索引（可选，不配置时使用内置默认值）
 var cfg = world.GetOrCreateSingleton<SpatialIndexConfig>();
-world.SetComponent(cfg, SpatialIndexConfig.Default); // 或自定义 QuadXZ 等
+world.SetComponent(cfg, new SpatialIndexConfig
+{
+    Dimension = SpatialDimension.QuadXZ,
+    WorldCenter = float3.zero,
+    WorldHalfExtent = new float3(500f),
+    MaxDepth = 8,
+    NodeCapacity = 8,
+});
 
 // 相机桥接：每帧写入视锥
 var cam = world.GetOrCreateSingleton<CameraFrustum>();
 world.SetComponent(cam, FrustumMath.FromViewProjection(Camera.main.projectionMatrix * Camera.main.worldToCameraMatrix));
 
-// 游戏代码：范围查询
-var tree = SpatialIndex.GetTree(world);
-var buffer = new List<Entity>(256);
-tree.QuerySphere(explosionCenter, radius, buffer);
+// 游戏代码：范围查询（树是 SpatialTree 单例组件，必须经 ref 使用；
+// 首帧系统未运行时单例尚未初始化，用 IsInitialized 判断）
+if (world.TryGetSingleton<SpatialTree>(out var treeOwner))
+{
+    ref var tree = ref world.GetComponent<SpatialTree>(treeOwner);
+    if (tree.IsInitialized)
+    {
+        var buffer = new NativeList<Entity>(256, Allocator.TempJob);
+        tree.QuerySphere(explosionCenter, radius, ref buffer);
+        // ... 用完 buffer.Dispose()
+    }
+}
+
+// 退出前（销毁 ECSManager 之前）：释放树的原生容器
+if (world.TryGetSingleton<SpatialTree>(out var teardownOwner))
+{
+    ref var tree = ref world.GetComponent<SpatialTree>(teardownOwner);
+    if (tree.IsInitialized) tree.Dispose();
+}
 ```
 
 ## 使用示例
@@ -97,7 +188,7 @@ using Unity.Mathematics;
 var world = new World();
 var entity = world.CreateEntity();
 
-world.AddComponent(entity, LocalTransform.FromPosition(new float3(0f, 1f, 0f)));
+world.AddComponent(entity, new LocalTransform(new float3(0f, 1f, 0f), quaternion.identity, 1f));
 world.AddComponent(entity, new LinearVelocity(new float3(0f, 0f, 5f)));
 world.AddComponent(entity, new Lifetime(3f));
 
@@ -136,3 +227,8 @@ csproj 通过以下 MSBuild 属性定位依赖，默认值指向本机相邻仓�
 2. Tag 组件不得包含实例字段
 3. 命名空间统一 `Ember.Core`，按分类放入 `src/<Category>/`
 4. 源生成器会自动完成注册；若新增程序集，需在首个 `World` 创建前加载
+5. **静态禁令**：组件、系统与普通类不得声明静态成员/方法。纯函数数学集中于工具类
+   （如 `FrustumMath`），World 级全局数据结构（如空间树）以单例组件存放，业务侧经
+   标准单例 API 自取。`const` 编译期字面量不受此限。
+6. **一文件一类型**：每个文件只定义一个顶层类型（class/struct/enum/interface），
+   文件名与类型名一致；连 Job 作业与其宿主系统、枚举与其使用方也必须拆分为独立文件。

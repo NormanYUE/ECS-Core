@@ -9,7 +9,7 @@ namespace Ember.Core.Tests
         [Test]
         public void LocalTransform_Identity_HasOriginIdentityRotationUnitScale()
         {
-            var t = LocalTransform.Identity;
+            var t = new LocalTransform(float3.zero, quaternion.identity, 1f);
 
             Assert.That(t.Position.Equals(float3.zero), Is.True);
             Assert.That(t.Rotation.Equals(quaternion.identity), Is.True);
@@ -31,7 +31,7 @@ namespace Ember.Core.Tests
         {
             var point = new float3(1f, 2f, 3f);
 
-            Assert.That(LocalTransform.Identity.TransformPoint(point).Equals(point), Is.True);
+            Assert.That(new LocalTransform(float3.zero, quaternion.identity, 1f).TransformPoint(point).Equals(point), Is.True);
         }
 
         [Test]
@@ -68,16 +68,16 @@ namespace Ember.Core.Tests
         [Test]
         public void LocalToWorld_Identity_IsIdentityMatrix()
         {
-            Assert.That(LocalToWorld.Identity.Value.Equals(float4x4.identity), Is.True);
+            Assert.That(new LocalToWorld { Value = float4x4.identity }.Value.Equals(float4x4.identity), Is.True);
         }
 
         [Test]
         public void LocalToWorld_Compose_CombinesParentAndLocal()
         {
             var parent = new LocalToWorld { Value = float4x4.Translate(new float3(10f, 0f, 0f)) };
-            var local = LocalTransform.FromPosition(new float3(1f, 2f, 3f));
+            var local = new LocalTransform(new float3(1f, 2f, 3f), quaternion.identity, 1f);
 
-            var composed = LocalToWorld.Compose(local, parent);
+            var composed = new LocalToWorld { Value = math.mul(parent.Value, local.ToMatrix()) };
 
             Assert.That(math.distance(composed.Position, new float3(11f, 2f, 3f)), Is.LessThan(1e-4f));
         }

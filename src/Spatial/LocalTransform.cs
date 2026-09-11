@@ -25,13 +25,6 @@ namespace Ember.Core
             Scale = scale;
         }
 
-        /// <summary>单位变换：原点、无旋转、缩放 1。</summary>
-        public static LocalTransform Identity => new LocalTransform(float3.zero, quaternion.identity, 1f);
-
-        /// <summary>仅平移的变换（旋转为单位、缩放为 1）。</summary>
-        public static LocalTransform FromPosition(float3 position)
-            => new LocalTransform(position, quaternion.identity, 1f);
-
         /// <summary>转换为 4x4 变换矩阵（T * R * S）。</summary>
         public float4x4 ToMatrix() => float4x4.TRS(Position, Rotation, new float3(Scale));
 

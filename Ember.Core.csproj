@@ -33,6 +33,12 @@
             <HintPath>$(EmberFrameworkDir)/libs/Unity.Mathematics.dll</HintPath>
             <Private>false</Private>
         </Reference>
+        <!-- 显式 Burst 策略（EmberJobCompilationMode.Burst）要求编译期可解析 Unity.Burst 类型，
+             否则源生成器报 EMBER005。仅编译引用，运行时由 com.unity.burst 包提供。 -->
+        <Reference Include="Unity.Burst">
+            <HintPath>$(MSBuildThisFileDirectory)libs/Unity.Burst.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
         <Analyzer Include="$(EmberGeneratorDll)" />
     </ItemGroup>
 

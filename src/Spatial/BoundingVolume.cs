@@ -20,10 +20,6 @@ namespace Ember.Core
             Extents = extents;
         }
 
-        /// <summary>由中心与全长尺寸创建。</summary>
-        public static BoundingVolume FromCenterSize(float3 center, float3 size)
-            => new BoundingVolume(center, size * 0.5f);
-
         /// <summary>包围球半径（包围盒外接球），供球体粗略剔除使用。</summary>
         public float BoundingRadius => math.length(Extents);
     }

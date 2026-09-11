@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Security;
 using NUnit.Framework;
+using Unity.Collections;
 using Unity.Mathematics;
 
 namespace Ember.Core.Tests
@@ -25,7 +26,16 @@ namespace Ember.Core.Tests
         }
 
         [TearDown]
-        public void TearDown() => m_Manager?.Dispose();
+        public void TearDown()
+        {
+            if (m_Manager == null) return;
+            if (World.TryGetSingleton<SpatialTree>(out var treeOwner))
+            {
+                ref var tree = ref World.GetComponent<SpatialTree>(treeOwner);
+                if (tree.IsInitialized) tree.Dispose(); // 原生容器随测试拆卸释放
+            }
+            m_Manager.Dispose();
+        }
 
         private static void RequireNativeContainers()
         {
@@ -53,7 +63,7 @@ namespace Ember.Core.Tests
         [Test]
         public void SpatialIndex_TracksMovesAndDestruction()
         {
-            m_Manager.GetTicker(m_Ticker).Register<SpatialIndexSystem>();
+            m_Manager.GetTicker(m_Ticker).Register<SpatialSystemGroup>();
             m_Manager.Start();
 
             var configOwner = World.GetOrCreateSingleton<SpatialIndexConfig>();
@@ -70,14 +80,15 @@ namespace Ember.Core.Tests
             var b = SpawnIndexed(new float3(-100f, 0f, 0f), new float3(2f));
             m_Manager.Tick(m_Ticker, 0.016f);
 
-            var tree = SpatialIndex.GetTree(World);
-            Assert.That(tree, Is.Not.Null);
+            Assert.That(World.TryGetSingleton<SpatialTree>(out var treeOwner), Is.True);
+            ref var tree = ref World.GetComponent<SpatialTree>(treeOwner);
+            Assert.That(tree.IsInitialized, Is.True);
             Assert.That(tree.Contains(a), Is.True);
             Assert.That(tree.Contains(b), Is.True);
             Assert.That(tree.Count, Is.EqualTo(2));
 
-            var buffer = new List<Entity>();
-            tree.QuerySphere(new float3(10f, 0f, 0f), 5f, buffer);
+            var buffer = new NativeList<Entity>(8, Allocator.Persistent);
+            tree.QuerySphere(new float3(10f, 0f, 0f), 5f, ref buffer);
             Assert.That(buffer, Does.Contain(a));
             Assert.That(buffer, Does.Not.Contain(b));
 
@@ -86,10 +97,10 @@ namespace Ember.Core.Tests
             m_Manager.Tick(m_Ticker, 0.016f);
 
             buffer.Clear();
-            tree.QuerySphere(new float3(10f, 0f, 0f), 5f, buffer);
+            tree.QuerySphere(new float3(10f, 0f, 0f), 5f, ref buffer);
             Assert.That(buffer, Is.Empty);
             buffer.Clear();
-            tree.QuerySphere(new float3(150f, 0f, 0f), 5f, buffer);
+            tree.QuerySphere(new float3(150f, 0f, 0f), 5f, ref buffer);
             Assert.That(buffer, Does.Contain(a));
 
             // 销毁 b
@@ -97,12 +108,13 @@ namespace Ember.Core.Tests
             m_Manager.Tick(m_Ticker, 0.016f);
             Assert.That(tree.Contains(b), Is.False);
             Assert.That(tree.Count, Is.EqualTo(1));
+            buffer.Dispose();
         }
 
         [Test]
         public void SpatialIndex_QuadXZ_ProjectsOntoPlane()
         {
-            m_Manager.GetTicker(m_Ticker).Register<SpatialIndexSystem>();
+            m_Manager.GetTicker(m_Ticker).Register<SpatialSystemGroup>();
             m_Manager.Start();
 
             var configOwner = World.GetOrCreateSingleton<SpatialIndexConfig>();
@@ -118,16 +130,18 @@ namespace Ember.Core.Tests
             var entity = SpawnIndexed(new float3(10f, 300f, 10f), new float3(1f)); // 很高的实体
             m_Manager.Tick(m_Ticker, 0.016f);
 
-            var buffer = new List<Entity>();
-            SpatialIndex.GetTree(World).QueryAABB(
-                new float3(5f, -1000f, 5f), new float3(15f, 1000f, 15f), buffer);
+            var buffer = new NativeList<Entity>(8, Allocator.Persistent);
+            Assert.That(World.TryGetSingleton<SpatialTree>(out var treeOwner), Is.True);
+            World.GetComponent<SpatialTree>(treeOwner).QueryAABB(
+                new float3(5f, -1000f, 5f), new float3(15f, 1000f, 15f), ref buffer);
             Assert.That(buffer, Does.Contain(entity));
+            buffer.Dispose();
         }
 
         [Test]
         public void FrustumCulling_TagsTransitionsOnly()
         {
-            m_Manager.GetTicker(m_Ticker).Register<FrustumCullingSystem>();
+            m_Manager.GetTicker(m_Ticker).Register<SpatialSystemGroup>();
             m_Manager.Start();
 
             // 正交视锥：x∈[-10,10]，y∈[-5,5]

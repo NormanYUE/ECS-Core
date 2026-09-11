@@ -1,87 +1,53 @@
+using Unity.Collections;
 using Unity.Mathematics;
 
 namespace Ember.Core
 {
     /// <summary>
-    /// 空间索引维护系统。每 tick 遍历带 <see cref="LocalToWorld"/> + <see cref="BoundingVolume"/>
-    /// 的实体，把世界包围盒增量维护进空间树（四叉/八叉，由 <see cref="SpatialIndexConfig"/>
-    /// 单例决定；未配置时使用 <see cref="SpatialIndexConfig.Default"/>）。
-    /// 实体销毁或包围组件被移除时自动从树中剔除。
-    /// 其他代码经 <see cref="SpatialIndex"/> 取树做范围查询。
+    /// 空间索引维护系统（串行）。每 tick 读取 <see cref="WorldBounds"/>（由
+    /// <see cref="WorldBoundsSystem"/> Job 计算），把实体世界包围盒增量维护进
+    /// <see cref="SpatialTree"/> 单例组件（四叉/八叉，由 <see cref="SpatialIndexConfig"/>
+    /// 单例决定；未配置时使用内置默认值）。消失实体（销毁/包围组件被移除）经树的
+    /// 标记清扫在下一帧剔除。
+    /// 查询由业务侧经标准单例 API 自取：<c>ref world.GetComponent<SpatialTree>(owner)</c>；
+    /// 退出前对组件 ref 调用 <c>Dispose()</c> 释放原生容器。
     /// </summary>
     public sealed class SpatialIndexSystem : SystemBase
     {
-        private World m_World;
-
-        /// <summary>当前维护的空间树（首次 tick 后可用）。</summary>
-        public SpatialTree Tree { get; private set; }
-
         protected override void DeclareAccess(AccessBuilder access)
-            => access.Read<LocalToWorld>().Read<BoundingVolume>();
-
-        public override void OnDestroy()
         {
-            if (m_World != null)
-            {
-                SpatialIndex.Unregister(m_World, this);
-                m_World = null;
-            }
-            Tree = null;
+            access.Read<WorldBounds>().Write<SpatialTree>().StructuralChanges(); // 首次 tick 创建单例实体
         }
 
         protected override void OnTick(SystemContext ctx)
         {
-            if (Tree == null && !TryCreateTree(ctx)) return;
+            var world = ctx.World;
+            var owner = world.GetOrCreateSingleton<SpatialTree>();
+            ref var tree = ref world.GetComponent<SpatialTree>(owner);
 
-            foreach (var chunk in ctx.QueryChunks<LocalToWorld, BoundingVolume>())
+            if (!tree.IsInitialized)
             {
-                var localToWorlds = chunk.Read<LocalToWorld>();
-                var volumes = chunk.Read<BoundingVolume>();
+                var config = world.TryGetSingleton<SpatialIndexConfig>(out var cfgOwner)
+                    ? world.GetComponent<SpatialIndexConfig>(cfgOwner)
+                    : new SpatialIndexConfig
+                    {
+                        Dimension = SpatialDimension.Octree,
+                        WorldCenter = float3.zero,
+                        WorldHalfExtent = new float3(1000f),
+                        MaxDepth = 8,
+                        NodeCapacity = 8,
+                    };
+                tree.Initialize(config, Allocator.Persistent);
+            }
+
+            tree.BeginTick();
+            foreach (var chunk in ctx.QueryChunks<WorldBounds>())
+            {
+                var bounds = chunk.Read<WorldBounds>();
                 for (int row = 0; row < chunk.Count; row++)
-                {
-                    FrustumMath.TransformAABB(localToWorlds[row].Value,
-                        volumes[row].Center, volumes[row].Extents,
-                        out float3 center, out float3 extents);
-                    Tree.Update(chunk.EntityAt(row), center, extents);
-                }
+                    tree.Update(chunk.EntityAt(row), bounds[row].Center, bounds[row].Extents);
             }
-        }
-
-        protected override void OnEntityDestroyed(Entity entity) => Tree?.Remove(entity);
-
-        protected override void OnComponentRemoved(Entity entity, ComponentTypeId typeId)
-        {
-            // 移除开销是一次 O(1) 字典探测，无条件执行以避免依赖组件类型比对
-            Tree?.Remove(entity);
-        }
-
-        private bool TryCreateTree(SystemContext ctx)
-        {
-            SpatialIndexConfig config;
-            if (ctx.World.TryGetSingleton<SpatialIndexConfig>(out var owner))
-                config = ctx.World.GetComponent<SpatialIndexConfig>(owner);
-            else
-                config = SpatialIndexConfig.Default;
-
-            switch (config.Dimension)
-            {
-                case SpatialDimension.QuadXY:
-                    Tree = new Quadtree(QuadtreePlane.XY, config.WorldCenter, config.WorldHalfExtent.x,
-                        config.MaxDepth, config.NodeCapacity);
-                    break;
-                case SpatialDimension.QuadXZ:
-                    Tree = new Quadtree(QuadtreePlane.XZ, config.WorldCenter, config.WorldHalfExtent.x,
-                        config.MaxDepth, config.NodeCapacity);
-                    break;
-                default:
-                    Tree = new Octree(config.WorldCenter, config.WorldHalfExtent,
-                        config.MaxDepth, config.NodeCapacity);
-                    break;
-            }
-
-            m_World = ctx.World;
-            SpatialIndex.Register(ctx.World, this);
-            return true;
+            tree.EndTick();
         }
     }
 }

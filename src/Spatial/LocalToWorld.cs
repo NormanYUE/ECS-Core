@@ -11,9 +11,6 @@ namespace Ember.Core
         /// <summary>本地到世界的 4x4 矩阵。</summary>
         public float4x4 Value;
 
-        /// <summary>单位矩阵变换。</summary>
-        public static LocalToWorld Identity => new LocalToWorld { Value = float4x4.identity };
-
         /// <summary>世界空间位置（矩阵平移列）。</summary>
         public float3 Position => Value.c3.xyz;
 
@@ -28,9 +25,5 @@ namespace Ember.Core
 
         /// <summary>把本地空间点变换到世界空间。</summary>
         public float3 TransformPoint(float3 point) => math.transform(Value, point);
-
-        /// <summary>由 LocalTransform 与父级世界矩阵组合得到世界矩阵。</summary>
-        public static LocalToWorld Compose(in LocalTransform local, in LocalToWorld parent)
-            => new LocalToWorld { Value = math.mul(parent.Value, local.ToMatrix()) };
     }
 }

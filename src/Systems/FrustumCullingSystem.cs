@@ -1,59 +1,31 @@
-using Unity.Mathematics;
-
 namespace Ember.Core
 {
     /// <summary>
-    /// 视锥剔除系统。读取 <see cref="CameraFrustum"/> 单例，对带
-    /// <see cref="LocalToWorld"/> + <see cref="BoundingVolume"/> 的实体做
-    /// 世界包围盒-视锥测试，仅在进出视口的边沿增删 <see cref="InView"/> 标记
-    /// （结构变更与迁移数量正比于边沿实体数，而非全量实体数）。
-    /// <see cref="CameraFrustum"/> 单例不存在时整帧跳过。
+    /// 视锥剔除系统（Job·Burst）：对带 <see cref="WorldBounds"/> + <see cref="VisibilityState"/>
+    /// 的实体做世界包围盒-视锥测试，结果写入 <see cref="VisibilityState"/>。
+    /// 结构变更（<see cref="InView"/> 标签增删）由 <see cref="VisibilityApplySystem"/> 串行完成，
+    /// 本系统因此可以保持并行调度。<see cref="CameraFrustum"/> 单例不存在时整帧跳过。
     /// </summary>
-    public sealed class FrustumCullingSystem : SystemBase
+    public sealed class FrustumCullingSystem : JobSystem<FrustumCullingJob>
     {
-        private static readonly EntityQuery s_InViewQuery =
-            EntityQuery.With<LocalToWorld, BoundingVolume, InView>();
+        protected override void DeclareAccess(AccessBuilder access) => access.Read<WorldBounds>().Write<VisibilityState>();
 
-        private static readonly EntityQuery s_OutOfViewQuery =
-            EntityQuery.With<LocalToWorld, BoundingVolume>().None<InView>();
-
-        protected override void DeclareAccess(AccessBuilder access)
-            => access.Read<LocalToWorld>().Read<BoundingVolume>().Write<InView>().StructuralChanges();
-
-        protected override void OnTick(SystemContext ctx)
+        protected override FrustumCullingJob CompileJob(SystemContext ctx)
         {
-            if (!ctx.World.TryGetSingleton<CameraFrustum>(out var cameraOwner)) return;
-            CameraFrustum frustum = ctx.World.GetComponent<CameraFrustum>(cameraOwner);
-
-            // 已在视口内：离开者摘除标记
-            foreach (var chunk in ctx.QueryChunks(s_InViewQuery))
+            var job = new FrustumCullingJob
             {
-                var localToWorlds = chunk.Read<LocalToWorld>();
-                var volumes = chunk.Read<BoundingVolume>();
-                for (int row = 0; row < chunk.Count; row++)
-                {
-                    FrustumMath.TransformAABB(localToWorlds[row].Value,
-                        volumes[row].Center, volumes[row].Extents,
-                        out float3 center, out float3 extents);
-                    if (!FrustumMath.IntersectsAABB(frustum, center, extents))
-                        ctx.ECB.RemoveComponent<InView>(chunk.EntityAt(row));
-                }
-            }
-
-            // 视口外：进入者挂上标记
-            foreach (var chunk in ctx.QueryChunks(s_OutOfViewQuery))
+                BoundsSlot = Slot<WorldBounds>(),
+                StateSlot = Slot<VisibilityState>(),
+                HasCamera = 0,
+                Frustum = default,
+            };
+            
+            if (ctx.World.TryGetSingleton<CameraFrustum>(out var owner))
             {
-                var localToWorlds = chunk.Read<LocalToWorld>();
-                var volumes = chunk.Read<BoundingVolume>();
-                for (int row = 0; row < chunk.Count; row++)
-                {
-                    FrustumMath.TransformAABB(localToWorlds[row].Value,
-                        volumes[row].Center, volumes[row].Extents,
-                        out float3 center, out float3 extents);
-                    if (FrustumMath.IntersectsAABB(frustum, center, extents))
-                        ctx.ECB.AddComponent(chunk.EntityAt(row), new InView());
-                }
+                job.Frustum = ctx.World.GetComponent<CameraFrustum>(owner);
+                job.HasCamera = 1;
             }
+            return job;
         }
     }
 }

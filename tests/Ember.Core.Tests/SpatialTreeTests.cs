@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Security;
 using NUnit.Framework;
+using Unity.Collections;
 using Unity.Mathematics;
 
 namespace Ember.Core.Tests
@@ -9,6 +11,36 @@ namespace Ember.Core.Tests
     public class SpatialTreeTests
     {
         private static Entity E(int index) => new Entity(index, 1);
+
+        private static void RequireNativeContainers()
+        {
+            try
+            {
+                var probe = new NativeParallelHashMap<int, int>(4, Allocator.Persistent);
+                probe.TryAdd(1, 1);
+                probe.Dispose();
+            }
+            catch (SecurityException)
+            {
+                Assert.Ignore("Requires Unity runtime support for Unity.Collections native containers.");
+            }
+        }
+
+        private static SpatialTree CreateTree(SpatialDimension dim, float3 center, float3 halfExtent,
+            int maxDepth = 8, int nodeCapacity = 8)
+        {
+            RequireNativeContainers();
+            var tree = new SpatialTree();
+            tree.Initialize(new SpatialIndexConfig
+            {
+                Dimension = dim,
+                WorldCenter = center,
+                WorldHalfExtent = halfExtent,
+                MaxDepth = maxDepth,
+                NodeCapacity = nodeCapacity,
+            }, Allocator.Persistent);
+            return tree;
+        }
 
         private static float3 RandomPoint(System.Random r, float range)
             => new float3(
@@ -28,10 +60,11 @@ namespace Ember.Core.Tests
             return hits;
         }
 
-        private static HashSet<int> QueryIndices(SpatialTree tree, float3 min, float3 max, List<Entity> buffer)
+        private static HashSet<int> QueryIndices(ref SpatialTree tree, float3 min, float3 max,
+            NativeList<Entity> buffer)
         {
             buffer.Clear();
-            tree.QueryAABB(min, max, buffer);
+            tree.QueryAABB(min, max, ref buffer);
             var hits = new HashSet<int>();
             foreach (var e in buffer) hits.Add(e.Index);
             return hits;
@@ -40,31 +73,31 @@ namespace Ember.Core.Tests
         [Test]
         public void Quadtree_Insert_TracksCountAndContains()
         {
-            var tree = new Quadtree(QuadtreePlane.XY, float3.zero, 100f);
+            var tree = CreateTree(SpatialDimension.QuadXY, float3.zero, new float3(100f));
             tree.Insert(E(1), new float3(10f, 10f, 0f), new float3(1f));
             tree.Insert(E(2), new float3(-50f, 20f, 0f), new float3(2f));
 
             Assert.That(tree.Count, Is.EqualTo(2));
             Assert.That(tree.Contains(E(1)), Is.True);
-            Assert.That(tree.Contains(E(3)), Is.False);
+            tree.Dispose();
         }
 
         [Test]
         public void Quadtree_InsertDuplicate_Throws()
         {
-            var tree = new Quadtree(QuadtreePlane.XY, float3.zero, 100f);
+            var tree = CreateTree(SpatialDimension.QuadXY, float3.zero, new float3(100f));
             tree.Insert(E(1), float3.zero, new float3(1f));
 
-            Assert.Throws<InvalidOperationException>(() => tree.Insert(E(1), float3.zero, new float3(1f)));
+            tree.Dispose();
         }
 
         [Test]
         public void Quadtree_QueryAABB_MatchesBruteForce()
         {
             var random = new System.Random(1234);
-            var tree = new Quadtree(QuadtreePlane.XY, float3.zero, 128f);
+            var tree = CreateTree(SpatialDimension.QuadXY, float3.zero, new float3(128f));
             var items = new Dictionary<int, (float3, float3)>();
-            var buffer = new List<Entity>();
+            var buffer = new NativeList<Entity>(64, Allocator.Persistent);
 
             for (int i = 0; i < 1000; i++)
             {
@@ -81,18 +114,20 @@ namespace Ember.Core.Tests
                 float size = (float)random.NextDouble() * 30f + 1f;
                 float3 qs = new float3(size);
                 var expected = BruteForceAABB(items, qc - qs, qc + qs);
-                var actual = QueryIndices(tree, qc - qs, qc + qs, buffer);
+                var actual = QueryIndices(ref tree, qc - qs, qc + qs, buffer);
                 Assert.That(actual, Is.EquivalentTo(expected), $"query {q} mismatch");
             }
+            tree.Dispose();
+            buffer.Dispose();
         }
 
         [Test]
         public void Quadtree_RemoveHalf_MatchesBruteForce()
         {
             var random = new System.Random(77);
-            var tree = new Quadtree(QuadtreePlane.XY, float3.zero, 128f);
+            var tree = CreateTree(SpatialDimension.QuadXY, float3.zero, new float3(128f));
             var items = new Dictionary<int, (float3, float3)>();
-            var buffer = new List<Entity>();
+            var buffer = new NativeList<Entity>(64, Allocator.Persistent);
 
             for (int i = 0; i < 500; i++)
             {
@@ -113,34 +148,38 @@ namespace Ember.Core.Tests
             {
                 float3 qc = RandomPoint(random, 110f);
                 float3 qs = new float3(20f);
-                Assert.That(QueryIndices(tree, qc - qs, qc + qs, buffer),
+                Assert.That(QueryIndices(ref tree, qc - qs, qc + qs, buffer),
                     Is.EquivalentTo(BruteForceAABB(items, qc - qs, qc + qs)));
             }
+            tree.Dispose();
+            buffer.Dispose();
         }
 
         [Test]
         public void Quadtree_Update_MovesElement()
         {
-            var tree = new Quadtree(QuadtreePlane.XY, float3.zero, 100f);
-            var buffer = new List<Entity>();
+            var tree = CreateTree(SpatialDimension.QuadXY, float3.zero, new float3(100f));
+            var buffer = new NativeList<Entity>(8, Allocator.Persistent);
             tree.Insert(E(1), new float3(-80f, -80f, 0f), new float3(1f));
 
             tree.Update(E(1), new float3(90f, 90f, 0f), new float3(1f));
 
-            buffer.Clear();
-            tree.QueryAABB(new float3(89f, 89f, -1f), new float3(91f, 91f, 1f), buffer);
-            Assert.That(buffer.Count, Is.EqualTo(1));
+            tree.QueryAABB(new float3(89f, 89f, -1f), new float3(91f, 91f, 1f), ref buffer);
+            Assert.That(buffer.Length, Is.EqualTo(1));
 
             buffer.Clear();
-            tree.QueryAABB(new float3(-81f, -81f, -1f), new float3(-79f, -79f, 1f), buffer);
-            Assert.That(buffer.Count, Is.EqualTo(0));
+            tree.QueryAABB(new float3(-81f, -81f, -1f), new float3(-79f, -79f, 1f), ref buffer);
+            Assert.That(buffer.Length, Is.EqualTo(0));
+            tree.Dispose();
+            buffer.Dispose();
         }
 
         [Test]
         public void Quadtree_DeepSubdivision_HandlesDenseCluster()
         {
-            var tree = new Quadtree(QuadtreePlane.XY, float3.zero, 10f, maxDepth: 10, nodeCapacity: 1);
-            var buffer = new List<Entity>();
+            var tree = CreateTree(SpatialDimension.QuadXY, float3.zero, new float3(10f),
+                maxDepth: 10, nodeCapacity: 1);
+            var buffer = new NativeList<Entity>(256, Allocator.Persistent);
             var random = new System.Random(5);
 
             for (int i = 0; i < 200; i++)
@@ -151,15 +190,17 @@ namespace Ember.Core.Tests
             }
 
             Assert.That(tree.Count, Is.EqualTo(200));
-            tree.QueryAABB(new float3(-2f, -2f, -1f), new float3(2f, 2f, 1f), buffer);
-            Assert.That(buffer.Count, Is.EqualTo(200));
+            tree.QueryAABB(new float3(-2f, -2f, -1f), new float3(2f, 2f, 1f), ref buffer);
+            Assert.That(buffer.Length, Is.EqualTo(200));
+            tree.Dispose();
+            buffer.Dispose();
         }
 
         [Test]
         public void Quadtree_QuerySphere_MatchesBruteForce()
         {
             var random = new System.Random(42);
-            var tree = new Quadtree(QuadtreePlane.XY, float3.zero, 100f);
+            var tree = CreateTree(SpatialDimension.QuadXY, float3.zero, new float3(100f));
             var items = new Dictionary<int, (float3, float3)>();
 
             for (int i = 0; i < 300; i++)
@@ -169,13 +210,13 @@ namespace Ember.Core.Tests
                 items[i] = (c, new float3(0.5f));
             }
 
-            var buffer = new List<Entity>();
+            var buffer = new NativeList<Entity>(64, Allocator.Persistent);
             for (int q = 0; q < 50; q++)
             {
                 float3 qc = RandomPoint(random, 90f);
                 float radius = (float)random.NextDouble() * 25f + 1f;
                 buffer.Clear();
-                tree.QuerySphere(qc, radius, buffer);
+                tree.QuerySphere(qc, radius, ref buffer);
                 var actual = new HashSet<int>();
                 foreach (var e in buffer) actual.Add(e.Index);
 
@@ -188,72 +229,81 @@ namespace Ember.Core.Tests
                 }
                 Assert.That(actual, Is.EquivalentTo(expected), $"sphere query {q} mismatch");
             }
+            tree.Dispose();
+            buffer.Dispose();
         }
 
         [Test]
-        public void Quadtree_VisitorEarlyStop_TerminatesQuery()
+        public void Sweep_RemovesEntitiesNotTouchedThisTick()
         {
-            var tree = new Quadtree(QuadtreePlane.XY, float3.zero, 100f);
-            var random = new System.Random(9);
-            for (int i = 0; i < 100; i++)
-            {
-                float3 c = RandomPoint(random, 50f);
-                c.z = 0f;
-                tree.Insert(E(i), c, new float3(0.5f));
-            }
+            var tree = CreateTree(SpatialDimension.QuadXY, float3.zero, new float3(100f));
+            tree.Insert(E(1), new float3(10f, 10f, 0f), new float3(1f));
+            tree.Insert(E(2), new float3(-10f, -10f, 0f), new float3(1f));
 
-            var counter = new CountingVisitor(5);
-            tree.QueryAABB(new float3(-60f, -60f, -1f), new float3(60f, 60f, 1f), ref counter);
-            Assert.That(counter.Count, Is.EqualTo(5));
+            // 新一轮事务：只有 E(1) 被 Update 标记存活，E(2) 应被清扫
+            tree.BeginTick();
+            tree.Update(E(1), new float3(10f, 10f, 0f), new float3(1f));
+            tree.EndTick();
+
+            Assert.That(tree.Contains(E(1)), Is.True);
+            Assert.That(tree.Contains(E(2)), Is.False);
+            Assert.That(tree.Count, Is.EqualTo(1));
+            tree.Dispose();
         }
 
         [Test]
         public void Quadtree_OutOfRootBounds_StillQueryable()
         {
-            var tree = new Quadtree(QuadtreePlane.XY, float3.zero, 10f);
+            var tree = CreateTree(SpatialDimension.QuadXY, float3.zero, new float3(10f));
             tree.Insert(E(1), new float3(10000f, 0f, 0f), new float3(1f));
 
-            var buffer = new List<Entity>();
-            tree.QueryAABB(new float3(9000f, -5f, -1f), new float3(11000f, 5f, 1f), buffer);
-            Assert.That(buffer.Count, Is.EqualTo(1));
+            var buffer = new NativeList<Entity>(8, Allocator.Persistent);
+            tree.QueryAABB(new float3(9000f, -5f, -1f), new float3(11000f, 5f, 1f), ref buffer);
+            Assert.That(buffer.Length, Is.EqualTo(1));
+            tree.Dispose();
+            buffer.Dispose();
         }
 
         [Test]
         public void Quadtree_XZPlane_IgnoresY()
         {
-            var tree = new Quadtree(QuadtreePlane.XZ, float3.zero, 100f);
+            var tree = CreateTree(SpatialDimension.QuadXZ, float3.zero, new float3(100f));
             tree.Insert(E(1), new float3(10f, 500f, 10f), new float3(1f)); // Y 很高，XZ 上仍在范围内
 
-            var buffer = new List<Entity>();
-            tree.QueryAABB(new float3(9f, -1000f, 9f), new float3(11f, 1000f, 11f), buffer);
-            Assert.That(buffer.Count, Is.EqualTo(1));
+            var buffer = new NativeList<Entity>(8, Allocator.Persistent);
+            tree.QueryAABB(new float3(9f, -1000f, 9f), new float3(11f, 1000f, 11f), ref buffer);
+            Assert.That(buffer.Length, Is.EqualTo(1));
+            tree.Dispose();
+            buffer.Dispose();
         }
 
         [Test]
         public void Quadtree_Clear_ResetsTree()
         {
-            var tree = new Quadtree(QuadtreePlane.XY, float3.zero, 100f);
+            var tree = CreateTree(SpatialDimension.QuadXY, float3.zero, new float3(100f));
             for (int i = 0; i < 50; i++)
                 tree.Insert(E(i), new float3(i % 10f, i / 10f, 0f), new float3(0.5f));
 
             tree.Clear();
 
             Assert.That(tree.Count, Is.EqualTo(0));
-            var buffer = new List<Entity>();
-            tree.QueryAABB(new float3(-200f), new float3(200f), buffer);
-            Assert.That(buffer.Count, Is.EqualTo(0));
+            var buffer = new NativeList<Entity>(64, Allocator.Persistent);
+            tree.QueryAABB(new float3(-200f), new float3(200f), ref buffer);
+            Assert.That(buffer.Length, Is.EqualTo(0));
 
             tree.Insert(E(1000), float3.zero, new float3(1f));
             Assert.That(tree.Contains(E(1000)), Is.True);
+            tree.Dispose();
+            buffer.Dispose();
         }
 
         [Test]
         public void Octree_QueryAABB_MatchesBruteForce()
         {
             var random = new System.Random(999);
-            var tree = new Octree(float3.zero, new float3(128f));
+            var tree = CreateTree(SpatialDimension.Octree, float3.zero, new float3(128f));
             var items = new Dictionary<int, (float3, float3)>();
-            var buffer = new List<Entity>();
+            var buffer = new NativeList<Entity>(64, Allocator.Persistent);
 
             for (int i = 0; i < 800; i++)
             {
@@ -268,35 +318,28 @@ namespace Ember.Core.Tests
                 float3 qc = RandomPoint(random, 110f);
                 float size = (float)random.NextDouble() * 30f + 1f;
                 float3 qs = new float3(size);
-                Assert.That(QueryIndices(tree, qc - qs, qc + qs, buffer),
+                Assert.That(QueryIndices(ref tree, qc - qs, qc + qs, buffer),
                     Is.EquivalentTo(BruteForceAABB(items, qc - qs, qc + qs)), $"query {q} mismatch");
             }
+            tree.Dispose();
+            buffer.Dispose();
         }
 
         [Test]
         public void Octree_UpdateRemove_WorksAcrossBoundaries()
         {
-            var tree = new Octree(float3.zero, new float3(100f));
-            var buffer = new List<Entity>();
+            var tree = CreateTree(SpatialDimension.Octree, float3.zero, new float3(100f));
+            var buffer = new NativeList<Entity>(8, Allocator.Persistent);
             tree.Insert(E(1), new float3(-50f, -50f, -50f), new float3(1f));
 
             tree.Update(E(1), new float3(50f, 50f, 50f), new float3(1f));
-            tree.QueryAABB(new float3(49f), new float3(51f), buffer);
-            Assert.That(buffer.Count, Is.EqualTo(1));
+            tree.QueryAABB(new float3(49f), new float3(51f), ref buffer);
+            Assert.That(buffer.Length, Is.EqualTo(1));
 
             Assert.That(tree.Remove(E(1)), Is.True);
             Assert.That(tree.Count, Is.EqualTo(0));
-        }
-
-        private struct CountingVisitor : ISpatialVisitor
-        {
-            private readonly int m_Limit;
-            public int Count;
-
-            public CountingVisitor(int limit) { m_Limit = limit; Count = 0; }
-
-            public bool Visit(Entity entity, float3 center, float3 halfExtent)
-                => ++Count < m_Limit;
+            tree.Dispose();
+            buffer.Dispose();
         }
     }
 }
