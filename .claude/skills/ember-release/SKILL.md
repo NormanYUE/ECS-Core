@@ -145,7 +145,9 @@ git -C "/Users/norman/Documents/RiderProjects/Ember.Core.Package" push origin de
 1. 确认 `develop` 上的目标版本仍是纯 `a.b.c`。
 2. 更新双语 CHANGELOG/README 并重建、重跑全部源码与消费门禁。
 3. 提交并推送源码 `main` 与包 `develop`。
-4. 包仓库 `master` 合并 `develop`，打 `v<a.b.c>` tag 并推送。
+4. 包仓库通过 Pull Request（develop -> master）合并并创建 `v<a.b.c>` release tag 后推送 tag。
+   `master` 已启用分支保护：禁止直接 push（对管理员同样生效），必须走 PR；`develop` 仅禁止强推与删除，发布流程可直接 push。
+   PR 不要求审批（单人维护），但合并前确认 CI/门禁均已通过。
 5. 切回包仓库 `develop`。
 
 ## 汇报格式
