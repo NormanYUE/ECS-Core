@@ -6,7 +6,7 @@
         <Nullable>disable</Nullable>
         <RootNamespace>Ember.Core</RootNamespace>
         <AssemblyName>Ember.Core</AssemblyName>
-        <EmberFrameworkDir Condition="'$(EmberFrameworkDir)' == ''">$(MSBuildThisFileDirectory)../Ember</EmberFrameworkDir>
+        <EmberFrameworkDir Condition="'$(EmberFrameworkDir)' == ''">$(MSBuildThisFileDirectory)../Ember.Framework</EmberFrameworkDir>
         <EmberRuntimeDll Condition="'$(EmberRuntimeDll)' == ''">$(MSBuildThisFileDirectory)../Ember.Package/Runtime/Ember.dll</EmberRuntimeDll>
         <EmberGeneratorDll Condition="'$(EmberGeneratorDll)' == ''">$(MSBuildThisFileDirectory)../Ember.Package/RoslynAnalyzers/Ember.Generator.dll</EmberGeneratorDll>
         <EmberPackageDir Condition="'$(EmberPackageDir)' == ''">$(MSBuildThisFileDirectory)../Ember.Core.Package</EmberPackageDir>

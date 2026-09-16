@@ -1,6 +1,6 @@
 # Ember.Core
 
-基于 [Ember ECS 框架](../Ember) 的 Unity 项目基础组件库。提供空间、运动、时间、状态标记等
+基于 [Ember ECS 框架](../Ember.Framework) 的 Unity 项目基础组件库。提供空间、运动、时间、状态标记等
 通用组件，全部为 unmanaged struct，可直接用于 Chunk 存储与 Burst 编译的 Job 系统。
 
 - 目标框架：`netstandard2.1`（Unity 2022.3+）
@@ -204,7 +204,7 @@ csproj 通过以下 MSBuild 属性定位依赖，默认值指向本机相邻仓�
 
 | 属性 | 默认值 |
 |---|---|
-| `EmberFrameworkDir` | `../Ember`（提供 `libs/` 下的 Unity 程序集） |
+| `EmberFrameworkDir` | `../Ember.Framework`（提供 `libs/` 下的 Unity 程序集） |
 | `EmberRuntimeDll` | `../Ember.Package/Runtime/Ember.dll` |
 | `EmberGeneratorDll` | `../Ember.Package/RoslynAnalyzers/Ember.Generator.dll` |
 

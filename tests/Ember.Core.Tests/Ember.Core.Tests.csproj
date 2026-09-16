@@ -7,7 +7,7 @@
         <IsPackable>false</IsPackable>
         <IsTestProject>true</IsTestProject>
         <LangVersion>9.0</LangVersion>
-        <EmberFrameworkDir Condition="'$(EmberFrameworkDir)' == ''">$(MSBuildThisFileDirectory)../../../Ember</EmberFrameworkDir>
+        <EmberFrameworkDir Condition="'$(EmberFrameworkDir)' == ''">$(MSBuildThisFileDirectory)../../../Ember.Framework</EmberFrameworkDir>
         <EmberRuntimeDll Condition="'$(EmberRuntimeDll)' == ''">$(MSBuildThisFileDirectory)../../../Ember.Package/Runtime/Ember.dll</EmberRuntimeDll>
     </PropertyGroup>
 

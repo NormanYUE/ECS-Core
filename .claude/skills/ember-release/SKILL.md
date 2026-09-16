@@ -13,13 +13,13 @@ description: Ember Core Components 发布 Agent。构建并发布 DLL-only UPM �
 ## 仓库
 
 ```text
-源码仓库: /Users/norman/Documents/RiderProjects/Ember.Core         (main)
+源码仓库: /Users/norman/Documents/RiderProjects/Ember/Ember.Core         (main)
           https://github.com/NormanYUE/ECS-Core （私有）
-包仓库:   /Users/norman/Documents/RiderProjects/Ember.Core.Package
+包仓库:   /Users/norman/Documents/RiderProjects/Ember/Ember.Core.Package
           https://github.com/NormanYUE/Ember-Core （公开）
 测试分支: develop
 生产分支: master
-框架依赖: com.ember.ecs（/Users/norman/Documents/RiderProjects/Ember.Package）
+框架依赖: com.ember.ecs（/Users/norman/Documents/RiderProjects/Ember/Ember.Package）
 ```
 
 源码库可以直接修改。包库不得手工编辑二进制，也不得通过本地嵌入包或 PackageCache 替换绕过发布流程。
@@ -62,8 +62,8 @@ LICENSE.md
 
 ```bash
 git status --short --branch
-git -C "/Users/norman/Documents/RiderProjects/Ember.Core.Package" status --short --branch
-git -C "/Users/norman/Documents/RiderProjects/Ember.Core.Package" branch --show-current
+git -C "/Users/norman/Documents/RiderProjects/Ember/Ember.Core.Package" status --short --branch
+git -C "/Users/norman/Documents/RiderProjects/Ember/Ember.Core.Package" branch --show-current
 ```
 
 要求：包仓库处于 `develop` 且发布前 clean。源码仓库允许存在本次计划内变更，不得混入无关文件。
@@ -111,10 +111,10 @@ DLL hash 必须一致；`GeneratedComponentRegistrar` 必须存在于 DLL 中（
 git commit -m "<type>: <description>"
 git push origin main
 
-git -C "/Users/norman/Documents/RiderProjects/Ember.Core.Package" add package.json \
+git -C "/Users/norman/Documents/RiderProjects/Ember/Ember.Core.Package" add package.json \
   CHANGELOG.md CHANGELOG_EN.md README.md README_EN.md Runtime
-git -C "/Users/norman/Documents/RiderProjects/Ember.Core.Package" commit -m "release: <version> - <description>"
-git -C "/Users/norman/Documents/RiderProjects/Ember.Core.Package" push origin develop
+git -C "/Users/norman/Documents/RiderProjects/Ember/Ember.Core.Package" commit -m "release: <version> - <description>"
+git -C "/Users/norman/Documents/RiderProjects/Ember/Ember.Core.Package" push origin develop
 ```
 
 不得在源码仓库使用无审查的 `git add -A`，也不得把嵌套包仓库视为源码提交的一部分。
