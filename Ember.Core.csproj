@@ -3,6 +3,8 @@
     <PropertyGroup>
         <TargetFramework>netstandard2.1</TargetFramework>
         <LangVersion>9.0</LangVersion>
+        <!-- MovementSystem 的列指针收集需要指针转换。 -->
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <Nullable>disable</Nullable>
         <RootNamespace>Ember.Core</RootNamespace>
         <AssemblyName>Ember.Core</AssemblyName>
@@ -11,11 +13,12 @@
         <EmberGeneratorDll Condition="'$(EmberGeneratorDll)' == ''">$(MSBuildThisFileDirectory)../Ember.Package/RoslynAnalyzers/Ember.Generator.dll</EmberGeneratorDll>
         <EmberPackageDir Condition="'$(EmberPackageDir)' == ''">$(MSBuildThisFileDirectory)../Ember.Core.Package</EmberPackageDir>
         <EmberDeployPackageBinaries Condition="'$(EmberDeployPackageBinaries)' == ''">false</EmberDeployPackageBinaries>
+        <!-- tests/ 是独立测试工程。必须从默认通配项整体排除：只写 Compile Remove 时，
+             tests 下的文件仍留在 None 里，进而进入 CandidateAssemblyFiles。
+             而 AssemblySearchPaths 的顺序是 {CandidateAssemblyFiles};{HintPathFromItem}，
+             于是 Reference 会命中 tests 输出目录里的旧 DLL，HintPath 形同虚设。 -->
+        <DefaultItemExcludes>$(DefaultItemExcludes);tests/**</DefaultItemExcludes>
     </PropertyGroup>
-
-    <ItemGroup>
-        <Compile Remove="tests/**" />
-    </ItemGroup>
 
     <ItemGroup>
         <Reference Include="Ember">
