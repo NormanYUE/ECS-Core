@@ -243,8 +243,8 @@ namespace Ember.Core
 
         private void EnsureLength<T>(BufferHandle handle, int length) where T : unmanaged
         {
-            while (m_World.GetBufferLength<T>(handle) < length)
-                m_World.AddBufferElement<T>(handle, default);
+            if (m_World.GetBufferLength<T>(handle) < length)
+                m_World.ResizeBuffer<T>(handle, length);
         }
 
         // ---- 内部：查询 ----
