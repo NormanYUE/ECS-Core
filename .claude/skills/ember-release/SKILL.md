@@ -1,6 +1,6 @@
 ---
 name: ember-release
-description: Ember Core Components 发布 Agent。构建并发布 DLL-only UPM 包；使用纯 a.b.c 版本号；默认发布 develop 测试分支，明确“发布生产”时才合并 master。
+description: Ember Core Components 发布 Agent。构建并发布 DLL-only UPM 包；使用纯 a.b.c 版本号；默认发布 develop 测试分支，明确“发布生产”时才合并 main。
 ---
 
 # Ember Core Release Agent
@@ -8,7 +8,7 @@ description: Ember Core Components 发布 Agent。构建并发布 DLL-only UPM �
 ## 触发条件
 
 - “发布”“发布测试”“release” -> 发布新的 a.b.c 版本到包仓库 `develop`。
-- “发布生产”“正式发布” -> 将 `develop` 上最新的 a.b.c 版本合并到 `master` 并打 tag。
+- “发布生产”“正式发布” -> 将 `develop` 上最新的 a.b.c 版本合并到 `main` 并打 tag。
 
 ## 仓库
 
@@ -18,7 +18,7 @@ description: Ember Core Components 发布 Agent。构建并发布 DLL-only UPM �
 包仓库:   /Users/norman/Documents/RiderProjects/Ember/Ember.Core.Package
           https://github.com/NormanYUE/Ember-Core （公开）
 测试分支: develop
-生产分支: master
+生产分支: main
 框架依赖: com.ember.ecs（/Users/norman/Documents/RiderProjects/Ember/Ember.Package）
 ```
 
@@ -109,7 +109,7 @@ DLL hash 必须一致；`GeneratedComponentRegistrar` 必须存在于 DLL 中（
 ```bash
 # 先用 git status / git diff --name-only 审查范围，再显式 git add 本次文件。
 git commit -m "<type>: <description>"
-git push origin main
+git push origin develop
 
 git -C "/Users/norman/Documents/RiderProjects/Ember/Ember.Core.Package" add package.json \
   CHANGELOG.md CHANGELOG_EN.md README.md README_EN.md Runtime
@@ -125,9 +125,9 @@ git -C "/Users/norman/Documents/RiderProjects/Ember/Ember.Core.Package" push ori
 
 1. 确认 `develop` 上的目标版本仍是纯 `a.b.c`。
 2. 更新双语 CHANGELOG/README 并重建、重跑全部源码门禁。
-3. 提交并推送源码 `main` 与包 `develop`。
-4. 包仓库通过 Pull Request（develop -> master）合并并创建 `v<a.b.c>` release tag 后推送 tag。
-   `master` 已启用分支保护：禁止直接 push（对管理员同样生效），必须走 PR；`develop` 仅禁止强推与删除，发布流程可直接 push。
+3. 提交并推送源码 `develop` 与包 `develop`。
+4. 包仓库通过 Pull Request（develop -> main）合并并创建 `v<a.b.c>` release tag 后推送 tag。
+   `main` 已启用分支保护：禁止直接 push（对管理员同样生效），必须走 PR；`develop` 仅禁止强推与删除，发布流程可直接 push。
    PR 不要求审批（单人维护），但合并前确认 CI/门禁均已通过。
 5. 切回包仓库 `develop`。
 
@@ -135,7 +135,7 @@ git -C "/Users/norman/Documents/RiderProjects/Ember/Ember.Core.Package" push ori
 
 ```text
 测试发布：<a.b.c> -> develop
-源码：<sha> -> origin/main
+源码：<sha> -> origin/develop
 包：<sha> -> develop
 产物：Runtime/Ember.Core.dll hash 已匹配，GeneratedComponentRegistrar 存在
 ```
