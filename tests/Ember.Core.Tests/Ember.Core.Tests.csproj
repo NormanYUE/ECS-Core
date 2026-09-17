@@ -38,7 +38,7 @@
         <!-- 库侧 Unity.Burst 为 Private=false（包运行时由 com.unity.burst 包提供），
              但 CLI 测试宿主需要能实际加载该程序集，故测试项目以 Private=true 复制。 -->
         <Reference Include="Unity.Burst">
-            <HintPath>$(MSBuildThisFileDirectory)../../libs/Unity.Burst.dll</HintPath>
+            <HintPath>$(MSBuildThisFileDirectory)../../Libs~/Unity.Burst.dll</HintPath>
             <Private>true</Private>
         </Reference>
     </ItemGroup>

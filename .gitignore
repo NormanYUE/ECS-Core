@@ -3,3 +3,6 @@ obj/
 .idea/
 .vs/
 *.user
+.serena/
+.superpowers/
+.DS_Store
