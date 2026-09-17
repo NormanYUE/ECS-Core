@@ -14,9 +14,17 @@ namespace Ember.Core
     /// </summary>
     public sealed class PresentationCommandSystem : SystemBase
     {
-        private readonly EntityQuery m_Query = EntityQuery.With<PresentationPrefab, VisibilityState, LocalToWorld>();
+        // 查询在 OnCreate 构造，不用字段初始化器：系统由 SystemTicker.Register 立即构造，
+        // 早于 ECSManager.Start()、早于 World 构造，而 EntityQuery.With<T>() 会当场读组件注册表。
+        private EntityQuery m_Query;
+
+        public override void OnCreate()
+        {
+            m_Query = EntityQuery.With<PresentationPrefab, VisibilityState, LocalToWorld>();
+        }
+
         protected override void DeclareAccess(AccessBuilder access) => access.Read<PresentationPrefab>().Read<VisibilityState>().Read<LocalToWorld>().Write<PresentationCommands>().StructuralChanges();
-        
+
         protected override void OnTick(SystemContext ctx)
         {
             var world = ctx.World;

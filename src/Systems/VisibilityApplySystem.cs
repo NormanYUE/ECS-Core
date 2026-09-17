@@ -8,9 +8,18 @@ namespace Ember.Core
     /// </summary>
     public sealed class VisibilityApplySystem : SystemBase
     {
-        private readonly EntityQuery m_InViewQuery = EntityQuery.With<VisibilityState, InView>();
-        private readonly EntityQuery m_OutOfViewQuery = EntityQuery.With<VisibilityState>().None<InView>();
-        private readonly EntityQuery m_StaleTagQuery = EntityQuery.With<InView>().None<VisibilityState>();
+        // 查询在 OnCreate 构造，不用字段初始化器：系统由 SystemTicker.Register 立即构造，
+        // 早于 ECSManager.Start()、早于 World 构造，而 EntityQuery.With<T>() 会当场读组件注册表。
+        private EntityQuery m_InViewQuery;
+        private EntityQuery m_OutOfViewQuery;
+        private EntityQuery m_StaleTagQuery;
+
+        public override void OnCreate()
+        {
+            m_InViewQuery = EntityQuery.With<VisibilityState, InView>();
+            m_OutOfViewQuery = EntityQuery.With<VisibilityState>().None<InView>();
+            m_StaleTagQuery = EntityQuery.With<InView>().None<VisibilityState>();
+        }
 
         protected override void DeclareAccess(AccessBuilder access) => access.Read<VisibilityState>().Write<InView>().StructuralChanges();
 

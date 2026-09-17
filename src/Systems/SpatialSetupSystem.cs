@@ -9,9 +9,16 @@ namespace Ember.Core
     /// </summary>
     public sealed class SpatialSetupSystem : SystemBase
     {
-        private readonly EntityQuery m_MissingBounds = EntityQuery.With<LocalToWorld, BoundingVolume>().None<WorldBounds>();
+        // 查询在 OnCreate 构造，不用字段初始化器：系统由 SystemTicker.Register 立即构造，
+        // 早于 ECSManager.Start()、早于 World 构造，而 EntityQuery.With<T>() 会当场读组件注册表。
+        private EntityQuery m_MissingBounds;
+        private EntityQuery m_MissingVisibility;
 
-        private readonly EntityQuery m_MissingVisibility = EntityQuery.With<LocalToWorld, BoundingVolume>().None<VisibilityState>();
+        public override void OnCreate()
+        {
+            m_MissingBounds = EntityQuery.With<LocalToWorld, BoundingVolume>().None<WorldBounds>();
+            m_MissingVisibility = EntityQuery.With<LocalToWorld, BoundingVolume>().None<VisibilityState>();
+        }
 
         protected override void DeclareAccess(AccessBuilder access) => access.Write<WorldBounds>().Write<VisibilityState>().StructuralChanges();
 

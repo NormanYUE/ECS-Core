@@ -21,15 +21,10 @@ namespace Ember.Core
     /// </summary>
     public sealed class MovementSystem : SystemBase
     {
-        private readonly EntityQuery m_LinearQuery = new(
-            new ComponentMask().With<LocalTransform>().With<LinearVelocity>(),
-            ComponentMask.Empty,
-            new ComponentMask().With<Static>().With<Disabled>());
-
-        private readonly EntityQuery m_AngularQuery = new(
-            new ComponentMask().With<LocalTransform>().With<AngularVelocity>(),
-            ComponentMask.Empty,
-            new ComponentMask().With<Static>().With<Disabled>());
+        // 查询在 OnCreate 构造，不用字段初始化器：系统由 SystemTicker.Register 立即构造，
+        // 早于 ECSManager.Start()、早于 World 构造，而 ComponentMask.With<T>() 会当场读组件注册表。
+        private EntityQuery m_LinearQuery;
+        private EntityQuery m_AngularQuery;
 
         /// <summary>Chunk 信息列表（跨帧复用，增长才分配）。</summary>
         private NativeList<MovementChunkInfo> m_Infos;
@@ -41,6 +36,19 @@ namespace Ember.Core
             .Write<LocalTransform>()
             .Read<Static>()
             .Read<Disabled>();
+
+        public override void OnCreate()
+        {
+            m_LinearQuery = new EntityQuery(
+                new ComponentMask().With<LocalTransform>().With<LinearVelocity>(),
+                ComponentMask.Empty,
+                new ComponentMask().With<Static>().With<Disabled>());
+
+            m_AngularQuery = new EntityQuery(
+                new ComponentMask().With<LocalTransform>().With<AngularVelocity>(),
+                ComponentMask.Empty,
+                new ComponentMask().With<Static>().With<Disabled>());
+        }
 
         public override void OnDestroy()
         {
