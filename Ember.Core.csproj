@@ -12,7 +12,7 @@
         <EmberRuntimeDll Condition="'$(EmberRuntimeDll)' == ''">$(MSBuildThisFileDirectory)../Ember.Package/Runtime/Ember.dll</EmberRuntimeDll>
         <EmberGeneratorDll Condition="'$(EmberGeneratorDll)' == ''">$(MSBuildThisFileDirectory)../Ember.Package/RoslynAnalyzers/Ember.Generator.dll</EmberGeneratorDll>
         <EmberPackageDir Condition="'$(EmberPackageDir)' == ''">$(MSBuildThisFileDirectory)../Ember.Core.Package</EmberPackageDir>
-        <EmberDeployPackageBinaries Condition="'$(EmberDeployPackageBinaries)' == ''">false</EmberDeployPackageBinaries>
+        <EmberDeployPackageSources Condition="'$(EmberDeployPackageSources)' == ''">false</EmberDeployPackageSources>
         <!-- tests/ 是独立测试工程。必须从默认通配项整体排除：只写 Compile Remove 时，
              tests 下的文件仍留在 None 里，进而进入 CandidateAssemblyFiles。
              而 AssemblySearchPaths 的顺序是 {CandidateAssemblyFiles};{HintPathFromItem}，
@@ -45,12 +45,13 @@
         <Analyzer Include="$(EmberGeneratorDll)" />
     </ItemGroup>
 
-    <Target Name="DeployPackageDlls" AfterTargets="Build"
-            Condition="'$(EmberDeployPackageBinaries)' == 'true'">
-        <MakeDir Directories="$(EmberPackageDir)/Runtime"/>
-        <Copy SourceFiles="$(TargetPath)"
-              DestinationFiles="$(EmberPackageDir)/Runtime/Ember.Core.dll"
-              SkipUnchangedFiles="true" />
+    <!-- 发布测试：把源码同步进公开包库（源码包形态，不再发 DLL）。
+         为什么是源码：预编译 DLL 里的 [BurstCompile] 不会被 Unity 的 Burst ILPP 处理，
+         Job 会退回托管路径；源码包由 Unity 编译才行。详见 CLAUDE.md「发布流程」。
+         工具本体在 Ember.Framework/tools/ 下。 -->
+    <Target Name="DeployPackageSources" AfterTargets="Build"
+            Condition="'$(EmberDeployPackageSources)' == 'true'">
+        <Exec Command="python3 &quot;$(EmberFrameworkDir)/tools/deploy-package-sources.py&quot; --source &quot;$(MSBuildThisFileDirectory).&quot; --package &quot;$(EmberPackageDir)&quot; --name com.ember.core --runtime-asmdef Ember.Core.Runtime --runtime-root-namespace Ember.Core --runtime-refs &quot;Ember.Runtime,Unity.Collections,Unity.Mathematics,Unity.Burst&quot;" />
     </Target>
 
 </Project>
