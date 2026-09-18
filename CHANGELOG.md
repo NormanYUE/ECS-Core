@@ -2,6 +2,17 @@
 
 All notable changes to Ember Core Components.
 
+## [2.1.6] — 修复 2.1.5 引入的 Clear 越界调用
+
+### Fixed
+
+- **`m_Infos` 未创建时调用 `Clear()` 会抛异常，2.1.5 因此每 tick 报错且运动仍然失效。**
+
+  `NativeList<T>.Clear()` 第一行是 `AtomicSafetyHandle.CheckWriteAndBumpSecondaryVersion`，
+  而该列表由 `FillInfos` 首次调用时才创建 —— 默认句柄直接抛
+  「has been deallocated, it is not allowed to access it」，卡在清空这一步，
+  永远走不到创建列表。加 `IsCreated` 守卫。
+
 ## [2.1.5] — 修复 MovementSystem 块表不清空导致运动失效
 
 ### Fixed

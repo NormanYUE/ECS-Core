@@ -70,7 +70,11 @@ namespace Ember.Core
             // 而作业只处理 [0, total) 这段。不清空的话列表只增不减，作业永远在处理
             // 第一帧记下的旧块指针 —— 本 tick 的块反而进不了作业，运动静默失效；
             // 且块迁移/回收后那些指针已经悬空，写进去会踩坏别人的内存。
-            m_Infos.Clear();
+            //
+            // 必须判 IsCreated：列表由 FillInfos 首次调用时创建，而 Clear() 第一行就是
+            // AtomicSafetyHandle 检查，对未创建的列表会抛「has been deallocated」。
+            if (m_Infos.IsCreated)
+                m_Infos.Clear();
 
             int linearChunks = FillInfos(world.CompileQuery(m_LinearQuery).GetChunks(), linear: true);
             int angularChunks = FillInfos(world.CompileQuery(m_AngularQuery).GetChunks(), linear: false);

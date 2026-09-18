@@ -1,6 +1,6 @@
 {
   "name": "com.ember.core",
-  "version": "2.1.5",
+  "version": "2.1.6",
   "displayName": "Ember Core Components",
   "unity": "2022.3",
   "description": "Foundational ECS components and systems for Ember ECS framework: spatial transforms, motion, timing, state tags, deterministic random, native spatial index (quadtree/octree), frustum culling (Burst jobs), and a GameObject presentation layer with pooling. All unmanaged structs, Burst-compatible, registered automatically via source generator.",

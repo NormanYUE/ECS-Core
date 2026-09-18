@@ -2,6 +2,18 @@
 
 All notable changes to Ember Core Components.
 
+## [2.1.6] — Fix the out-of-bounds Clear introduced in 2.1.5
+
+### Fixed
+
+- **Calling `Clear()` on an uncreated `m_Infos` threw, so 2.1.5 logged an error every tick and
+  motion still did not work.**
+
+  `NativeList<T>.Clear()` starts with `AtomicSafetyHandle.CheckWriteAndBumpSecondaryVersion`, but
+  the list is only created by the first `FillInfos` call — the default handle throws
+  "has been deallocated, it is not allowed to access it" and the code never reaches the creation
+  step. Guarded with `IsCreated`.
+
 ## [2.1.5] — Fix MovementSystem silently dropping motion
 
 ### Fixed
