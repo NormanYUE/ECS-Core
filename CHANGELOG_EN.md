@@ -2,6 +2,25 @@
 
 All notable changes to Ember Core Components.
 
+## [2.1.5] — Fix MovementSystem silently dropping motion
+
+### Fixed
+
+- **`MovementSystem` never cleared its chunk-info list `m_Infos`, which silently disabled motion.**
+
+  `FillInfos` appends (the linear and angular queries share one list), while the job is scheduled
+  as `Schedule(total, …)` and therefore only processes `[0, total)`. With the list never cleared,
+  `total` is the number of chunks **added this tick** but the job consumed the **head** of the list
+  — the chunk pointers captured on the very first tick. Two consequences:
+
+  - The current tick's chunks never reached the job, so entities that appeared later (units spawned
+    mid-battle, for example) never moved, while velocity and animation state stayed correct — the
+    symptom is a walk animation playing in place.
+  - `chunkCount` entries leaked every tick (the list only ever grew), and once chunks migrated or
+    were recycled those pointers dangled, letting the job write into unrelated memory.
+
+  Fix: `m_Infos.Clear()` before gathering, inside `OnTick`.
+
 ## [2.1.4] — Package repository moved to ECS-Core.git
 
 ### Changed

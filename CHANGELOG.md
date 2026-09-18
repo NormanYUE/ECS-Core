@@ -2,6 +2,23 @@
 
 All notable changes to Ember Core Components.
 
+## [2.1.5] — 修复 MovementSystem 块表不清空导致运动失效
+
+### Fixed
+
+- **`MovementSystem` 的块信息列表 `m_Infos` 每 tick 不清空，运动静默失效。**
+
+  `FillInfos` 是「追加」语义（线速度、角速度两次调用共用一个列表），而作业按
+  `Schedule(total, …)` 只处理 `[0, total)` —— 列表不清空时，`total` 是**本 tick 新增**
+  的块数，作业处理的却是**列表头部**那批，也就是第一帧记下的块指针。后果有二：
+
+  - 本 tick 的块从来没进过作业，新出现的实体（例如战斗中途生成的单位）位置永远不动，
+    而速度、动画状态一切正常，现象是「原地播放移动动画」；
+  - 每 tick 泄漏 `chunkCount` 个条目（列表只增不减），且那些指针在块迁移 / 回收后
+    已经悬空，作业会写进别人的内存。
+
+  修复：`OnTick` 内收集前 `m_Infos.Clear()`。
+
 ## [2.1.4] — 包仓库迁移到 ECS-Core.git
 
 ### Changed
