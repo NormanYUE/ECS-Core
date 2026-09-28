@@ -2,6 +2,17 @@
 
 All notable changes to Ember Core Components.
 
+## [2.1.7] — Dependency raised to Ember 1.13.2
+
+### Changed
+
+- `com.ember.ecs` raised from 1.13.0 to 1.13.2. **No source changes in this package**: 1.13.1
+  (pooled ECB replay scratch) and 1.13.2 (a missing `firstNonFullIndex` rewind in
+  `DestroyEntity` let chunks grow without bound) are both internal framework fixes with an
+  unchanged public API. The bump only keeps the exact versions along the dependency chain
+  consistent — UPM resolves exact versions, so a downstream package asking for 1.13.2 must not
+  find this one still declaring 1.13.0.
+
 ## [2.1.6] — Fix the out-of-bounds Clear introduced in 2.1.5
 
 ### Fixed

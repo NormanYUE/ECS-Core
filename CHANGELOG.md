@@ -2,6 +2,15 @@
 
 All notable changes to Ember Core Components.
 
+## [2.1.7] — 依赖指向 Ember 1.13.2
+
+### Changed
+
+- 依赖 `com.ember.ecs` 由 1.13.0 提升至 1.13.2。**本包源码未变** —— 1.13.1（ECB 回放
+  暂存池化）与 1.13.2（`DestroyEntity` 漏回拨 `firstNonFullIndex`，chunk 只增不减）都是
+  框架内部修复，公共 API 不变。提升版本只为让依赖链上的精确版本一致 —— UPM 按精确版本
+  解析，下游包要求 1.13.2 时本包不能还停在 1.13.0。
+
 ## [2.1.6] — 修复 2.1.5 引入的 Clear 越界调用
 
 ### Fixed
