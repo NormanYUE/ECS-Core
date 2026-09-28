@@ -2,6 +2,24 @@
 
 All notable changes to Ember Core Components.
 
+## [2.1.8] — Package layout: development files hidden from Unity
+
+### Changed
+
+- **`Ember.Core.csproj` / `Ember.Core.sln` moved into `dotnet~/`.** Git-based UPM distribution has
+  **no exclusion mechanism** (only registry packages get `.npmignore` / the `files` field), so every
+  development file in the repository reaches consumers and is imported by Unity as an asset. A
+  trailing `~` is Unity's ignore convention; afterwards Unity sees only the package metadata,
+  `Runtime/` and `tests/`.
+
+- **`.claude/` removed**: internal release-process documentation, which does not belong in a public
+  package.
+
+Supporting change: with the project outside the repository root, MSBuild's default glob only sees
+`dotnet~/` itself (empty), so the project includes the source tree explicitly
+(`<Compile Include="../Runtime/**/*.cs" />`). **No API changes** — Unity-side compilation is
+unaffected (asmdefs and sources untouched).
+
 ## [2.1.7] — Dependency raised to Ember 1.13.2
 
 ### Changed

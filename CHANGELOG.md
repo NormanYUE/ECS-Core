@@ -2,6 +2,21 @@
 
 All notable changes to Ember Core Components.
 
+## [2.1.8] — 包布局：开发文件移出 Unity 可见范围
+
+### Changed
+
+- **`Ember.Core.csproj` / `Ember.Core.sln` 移入 `dotnet~/`。** UPM 走 git 分发时**没有排除机制**
+  （registry 包才有 `.npmignore` / `package.json` 的 `files`），仓库里的开发文件消费方全都会拿到，
+  Unity 也会把它们当资源导入。`~` 后缀是 Unity 的忽略约定；移进去之后 Unity 侧只剩包元数据、
+  `Runtime/` 与 `tests/`。
+
+- **删除 `.claude/`**：内部发布流程文档。本仓库是公开仓库，不该随包发布。
+
+配套：工程移出仓库根后 MSBuild 的默认通配只看得到 `dotnet~/` 自己（空），改为显式
+`<Compile Include="../Runtime/**/*.cs" />`。**无 API 变化**，Unity 侧编译行为不变
+（asmdef 与源码未动）。
+
 ## [2.1.7] — 依赖指向 Ember 1.13.2
 
 ### Changed
