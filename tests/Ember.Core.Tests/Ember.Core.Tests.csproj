@@ -18,7 +18,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\..\Ember.Core.csproj" />
+        <ProjectReference Include="..\..\dotnet~\Ember.Core.csproj" />
         <Reference Include="Ember">
             <HintPath>$(EmberRuntimeDll)</HintPath>
             <Private>true</Private>

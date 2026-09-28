@@ -2,7 +2,7 @@
 Microsoft Visual Studio Solution File, Format Version 12.00
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Ember.Core", "Ember.Core.csproj", "{9D2F174E-4A36-48C8-B770-53D12E7A89BF}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Ember.Core.Tests", "tests\Ember.Core.Tests\Ember.Core.Tests.csproj", "{4CBE0D98-3C3A-4FC3-962E-5EDBBBD2E83B}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Ember.Core.Tests", "..\tests\Ember.Core.Tests\Ember.Core.Tests.csproj", "{4CBE0D98-3C3A-4FC3-962E-5EDBBBD2E83B}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
